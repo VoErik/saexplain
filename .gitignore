@@ -212,3 +212,7 @@ __marimo__/
 data/
 
 .idea
+wandb/
+experiments/
+embeddings/
+checkpoints/

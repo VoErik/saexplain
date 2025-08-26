@@ -122,7 +122,7 @@ class SAEEvaluator:
         total_sum_squared_error = 0.0
         total_variance_explained_num = 0.0
         total_variance_explained_den = 0.0
-        k = self.sae_model.cfg.activation_fn_kwargs.k \
+        k = self.sae_model.cfg.activation_fn_kwargs["k"] \
             if self.sae_model.cfg.activation_fn_str == "topk" \
             else math.floor(
             self.sae_model.cfg.d_sae * 0.05 # use 5% if no k is given via config

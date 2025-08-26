@@ -1,0 +1,66 @@
+# model args
+architecture: "mae-vit"
+patch_size: 16
+mlp_ratio: 4.0
+encoder_dim: 768
+num_encoder_heads: 16
+encoder_depth: 12
+decoder_dim: 512
+num_decoder_heads: 16
+decoder_depth: 6
+norm_pix_loss: false
+mask_ratio: 0.75
+learnable_pos_embed: true
+
+# data args
+data_root: "data"
+training_datasets:
+  - "ham10000"
+  - "scin"
+  - "fitzpatrick17k"
+dataset: "fp-scin-ham"
+batch_size: 128
+img_size: 224
+in_channels: 3
+test_size: 0.01
+num_workers: 12
+stratify: true
+stratify_by: "label"
+transform: null
+pin_memory: true
+shuffle: true
+
+# training args
+epochs: 400
+# Note: The default learning rate is calculated dynamically (5e-4 * batch_size / 256).
+# Using the default batch_size of 128, the lr is 2.5e-4.
+# The load_from_yaml method will recalculate this if 'lr' is not present,
+# but we include it here for a complete representation of the defaults.
+lr: 0.00025
+optimizer: "adamw"
+weight_decay: 0.05
+beta1: 0.95
+beta2: 0.999
+scheduler: "cosine"
+min_lr: 0.000001
+warmup_epochs: 20
+do_batch_visualization: true
+batch_visualization_every: 50
+do_online_probing: true
+online_probing_every: 20
+probe_dataset: "ham10000"
+probe_dataset_2: "fitzpatrick17k"
+probe_classes: 7
+num_probe_epochs: 10
+probe_test_size: 0.2
+keep_copy_of_best_model: true
+do_validation: true
+
+# misc
+device: "cuda"
+seed: 1112
+wandb_team: "voerik"
+wandb_project: "thesis-backbone-training"
+# Note: wandb_name and output_dir are generated dynamically from other default values.
+wandb_name: "fp-scin-ham"
+output_dir: "./out/fp-scin-ham-400-768-12-512-6/"

@@ -21,7 +21,7 @@ from src.models.sae.activation_store import VisionActivationStore
 from src.models.sae.eval import SAEEvaluator
 
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast as autocast_torch  # TODO: deprecated, fix someday
+from torch.cuda.amp import GradScaler
 from tqdm import tqdm
 import wandb
 from pathlib import Path
@@ -296,7 +296,6 @@ class SAETrainer:
                 self.sae_model, log_freq=self.config.wandb_log_frequency_steps * 5, log="all"
             )
 
-        # Mixed Precision -> # TODO: deprecated, fix
         self.autocast_dtype = None
         if self.config.autocast_bf16 and torch.cuda.is_available() and torch.cuda.is_bf16_supported():
             self.autocast_dtype = torch.bfloat16
@@ -436,8 +435,9 @@ class SAETrainer:
                 current_dead_neuron_mask = self.dead_neuron_mask
                 current_l1_for_loss = self._get_current_l1_coeff_for_loss()
 
-                with autocast_torch(dtype=self.autocast_dtype,
-                                    enabled=self.grad_scaler.is_enabled()):
+                with torch.amp.autocast("cuda",
+                                        dtype=self.autocast_dtype,
+                                        enabled=self.grad_scaler.is_enabled()):
                     step_output: TrainStepOutput = self.sae_model.training_forward_pass(
                         batch_activations,
                         current_l1_coefficient=current_l1_for_loss,

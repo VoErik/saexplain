@@ -21,8 +21,8 @@ if __name__ == '__main__':
     cfg_dicts = load_configs_from_yaml(args.config)
     device = torch.device(args.device)
 
-    EXPANSION_FACTORS = [32]
-    KS = [8, 16, 32, 64, 128]
+    EXPANSION_FACTORS = [8]
+    KS = [64]
 
     for expansion in EXPANSION_FACTORS:
         for k in KS:
@@ -73,11 +73,9 @@ if __name__ == '__main__':
             print("Starting SAE training...")
             trainer.train(num_epochs=args.num_epochs)
 
-            save_dir = Path(args.save_dir)
-            sae_model.save_model(save_dir)
+            save_dir = Path(sae_cfg.checkpoint_path)
+            sae_model.save_model(save_dir / sae_model.get_name())
             print(f"Model saved to {save_dir}.")
-
-            loaded_sae = SAE.load_model(save_dir)
 
             print("Clearing memory for next run...")
             del sae_model

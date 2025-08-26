@@ -130,7 +130,10 @@ fi
 
 ## --- Run Task ---
 echo "🚀 Running the Python task script..."
-CMD=(python "$TASK_SCRIPT")
+TASK_MODULE="${TASK_SCRIPT%.py}"
+TASK_MODULE="${TASK_MODULE//\//.}"
+
+CMD=(python -m "$TASK_MODULE")
 if [ -n "$CONFIG_FILE" ]; then
     CMD+=("--config" "$CONFIG_FILE")
 fi
@@ -138,6 +141,7 @@ CMD+=("${EXTRA_ARGS[@]}")
 
 echo "🔧 Command: ${CMD[@]}"
 "${CMD[@]}"
+
 echo "✅ Task script finished!"
 
 ## --- Post-task Archiving ---

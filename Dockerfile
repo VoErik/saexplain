@@ -13,6 +13,6 @@ RUN pip install --no-cache-dir --ignore-installed pip -r requirements.txt
 
 COPY . .
 
-RUN chmod +x entrypoint_fast.sh
+RUN chmod +x entrypoint.sh
 
 ENTRYPOINT ["./entrypoint_fast.sh"]

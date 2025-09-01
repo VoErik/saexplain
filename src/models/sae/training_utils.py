@@ -117,8 +117,8 @@ def topk_auxiliary_loss(
     # Create feature activations using only these top k_aux dead neurons' pre-activations
     auxk_feature_acts = torch.zeros_like(hidden_pre_acts)
     auxk_feature_acts.scatter_(-1, auxk_top_indices, auxk_top_values)
-
-    recons_of_residual_by_dead = decode_fn(auxk_feature_acts)
+    auxk_feature_post_acts = F.relu(auxk_feature_acts)
+    recons_of_residual_by_dead = decode_fn(auxk_feature_post_acts)
 
     aux_loss = mse_loss(recons_of_residual_by_dead, residual)
 

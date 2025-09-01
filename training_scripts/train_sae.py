@@ -21,70 +21,78 @@ if __name__ == '__main__':
     cfg_dicts = load_configs_from_yaml(args.config)
     device = torch.device(args.device)
 
-    EXPANSION_FACTORS = [8]
-    KS = [64]
+    ARCHS = ["standard", "topk"]
+    EXPANSION_FACTORS = [32]
+    KS = [32, 64, 128]
 
-    for expansion in EXPANSION_FACTORS:
-        for k in KS:
-            sae_cfg = TrainingSAEConfig.from_dict(cfg_dicts["sae"])
+    for arch in ARCHS:
+        for expansion in EXPANSION_FACTORS:
+            for k in KS:
+                sae_cfg = TrainingSAEConfig.from_dict(cfg_dicts["sae"])
 
-            sae_cfg.d_sae = sae_cfg.d_in * expansion
-            sae_cfg.activation_fn_kwargs["k"] = k
+                sae_cfg.architecture = arch
+                if arch == "standard":
+                    sae_cfg.activation_fn_str = "relu"
+                    sae_cfg.activation_fn_kwargs = {}
+                elif arch == "topk":
+                    sae_cfg.activation_fn_kwargs["k"] = k
+                sae_cfg.d_sae = sae_cfg.d_in * expansion
 
-            sae_model = get_training_sae(architecture=sae_cfg.architecture, cfg=sae_cfg)
-            sae_model.to(device)
-            print(f"SAE Model: {sae_model.get_name()}")
-            print(f"Activation function: {sae_model.activation_fn}")
 
-            act_store_cfg = cfg_dicts["activation_store"]
+                sae_model = get_training_sae(architecture=sae_cfg.architecture, cfg=sae_cfg)
+                sae_model.to(device)
+                print(f"SAE Model: {sae_model.get_name()}")
+                print(f"Activation function: {sae_model.activation_fn}")
 
-            train_activation_store = VisionActivationStore(
-                dataset_name=act_store_cfg["dataset_name"],
-                feature_extractor_model=act_store_cfg["feature_extractor"],
-                d_in=sae_cfg.d_in,
-                store_batch_size=sae_cfg.train_batch_size,
-                device=device,
-                cache_path=Path(f"{act_store_cfg['embedding_cache_path']}"
-                                f"/{act_store_cfg['dataset_name']}"
-                                f"/{act_store_cfg['feature_extractor']}"
-                                f"/train_embeds_d{sae_cfg.d_in}.pt"),
-                extraction_batch_size=act_store_cfg["extraction_batch_size"],
-                shuffle_each_epoch=True,
-            )
+                act_store_cfg = cfg_dicts["activation_store"]
 
-            eval_activation_store = VisionActivationStore(
-                dataset_name=act_store_cfg["eval_dataset_name"],
-                feature_extractor_model=act_store_cfg["feature_extractor"],
-                d_in=sae_cfg.d_in,
-                device=device,
-                cache_path=Path(f"{act_store_cfg['embedding_cache_path']}"
-                                f"/{act_store_cfg['eval_dataset_name']}"
-                                f"/{act_store_cfg['feature_extractor']}"
-                                f"/eval_embeds_d{sae_cfg.d_in}.pt"),
-                extraction_batch_size=act_store_cfg["extraction_batch_size"],
-                shuffle_each_epoch=False,
-            )
+                train_activation_store = VisionActivationStore(
+                    dataset_name=act_store_cfg["dataset_name"],
+                    feature_extractor_model=act_store_cfg["feature_extractor"],
+                    d_in=sae_cfg.d_in,
+                    store_batch_size=sae_cfg.train_batch_size,
+                    device=device,
+                    cache_path=Path(f"{act_store_cfg['embedding_cache_path']}"
+                                    f"/{act_store_cfg['dataset_name']}"
+                                    f"/{act_store_cfg['feature_extractor']}"
+                                    f"/train_embeds_d{sae_cfg.d_in}.pt"),
+                    extraction_batch_size=act_store_cfg["extraction_batch_size"],
+                    shuffle_each_epoch=True,
+                )
 
-            trainer = SAETrainer(
-                sae_model=sae_model,
-                activation_store=train_activation_store,
-                eval_activation_store=eval_activation_store
-            )
-            print("Starting SAE training...")
-            trainer.train(num_epochs=args.num_epochs)
+                eval_activation_store = VisionActivationStore(
+                    dataset_name=act_store_cfg["eval_dataset_name"],
+                    feature_extractor_model=act_store_cfg["feature_extractor"],
+                    d_in=sae_cfg.d_in,
+                    device=device,
+                    cache_path=Path(f"{act_store_cfg['embedding_cache_path']}"
+                                    f"/{act_store_cfg['eval_dataset_name']}"
+                                    f"/{act_store_cfg['feature_extractor']}"
+                                    f"/eval_embeds_d{sae_cfg.d_in}.pt"),
+                    extraction_batch_size=act_store_cfg["extraction_batch_size"],
+                    shuffle_each_epoch=False,
+                )
 
-            save_dir = Path(sae_cfg.checkpoint_path)
-            sae_model.save_model(save_dir / sae_model.get_name())
-            print(f"Model saved to {save_dir}.")
+                trainer = SAETrainer(
+                    sae_model=sae_model,
+                    activation_store=train_activation_store,
+                    eval_activation_store=eval_activation_store
+                )
+                print("Starting SAE training...")
+                trainer.train(num_epochs=args.num_epochs)
 
-            print("Clearing memory for next run...")
-            del sae_model
-            del trainer
-            del train_activation_store
-            del eval_activation_store
+                save_dir = Path(sae_cfg.checkpoint_path)
+                sae_model.save_model(save_dir / sae_model.get_name())
+                print(f"Model saved to {save_dir}.")
 
-            gc.collect()
+                print("Clearing memory for next run...")
+                del sae_model
+                del trainer
+                del train_activation_store
+                del eval_activation_store
 
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                gc.collect()
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 

@@ -95,5 +95,6 @@ class FitzpatrickSKINCON(Dataset):
             "fp_scale": row["fitzpatrick_scale"],
             "fp_centaur": row.get("fitzpatrick_centaur"),
             "concepts": concepts_tensor,
+            "img_path": str(img_path)
         }
         return img, label

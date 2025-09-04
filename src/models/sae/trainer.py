@@ -10,7 +10,7 @@ from src.models.sae.architectures import (
     GatedSAE,
 )
 from src.models.sae.config import TrainingSAEConfig
-from src.models.sae.core import SAE
+from src.models.sae.core import SAE, TopK
 from src.models.sae.training_utils import (
     mse_loss,
     l1_sparsity_loss,
@@ -79,7 +79,7 @@ class TrainingStandardSAE(TrainingSAEBase, StandardSAE):
     cfg: TrainingSAEConfig
 
     def __init__(self, cfg: TrainingSAEConfig):
-        if cfg.architecture != "standard":
+        if cfg.architecture not in ["standard", "jumprelu"]:
             raise ValueError("TrainingStandardSAE instantiated with non-'standard' architecture.")
         TrainingSAEBase.__init__(self, cfg)
         StandardSAE.__init__(self, cfg)
@@ -120,7 +120,7 @@ class TrainingTopKSAE(TrainingSAEBase, TopKSAE):
     cfg: TrainingSAEConfig
 
     def __init__(self, cfg: TrainingSAEConfig):
-        if cfg.architecture != "topk":
+        if cfg.architecture not in ["topk", "batchtopk"]:
             raise ValueError("TrainingTopKSAE instantiated with non-'topk' architecture.")
         TrainingSAEBase.__init__(self, cfg)
         TopKSAE.__init__(self, cfg)
@@ -141,7 +141,7 @@ class TrainingTopKSAE(TrainingSAEBase, TopKSAE):
         total_loss = current_mse_loss
 
         current_aux_loss = None
-        if self.cfg.architecture == "topk" and \
+        if isinstance(self.activation_fn, TopK) and \
                 self.cfg.topk_aux_loss_coefficient > 0 and \
                 dead_neuron_mask is not None and \
                 dead_neuron_mask.sum().item() > 0:
@@ -508,7 +508,10 @@ class SAETrainer:
                 current_batch_size = batch_activations.shape[0]
                 current_dead_neuron_mask = self.dead_neuron_mask
                 current_l1_for_loss = self._get_current_l1_coeff_for_loss()
-                self.sae_model.set_decoder_norm_to_unit_norm()
+
+                if self.config.use_decoder_unit_norm:
+                    self.sae_model.set_decoder_norm_to_unit_norm()
+
                 with torch.amp.autocast("cuda",
                                         dtype=self.autocast_dtype,
                                         enabled=self.grad_scaler.is_enabled()):
@@ -522,6 +525,11 @@ class SAETrainer:
 
                 self.optimizer.zero_grad()
                 self.grad_scaler.scale(total_loss).backward()
+                self.grad_scaler.unscale_(self.optimizer)
+
+                if self.config.use_decoder_unit_norm:
+                    self.sae_model.remove_gradient_parallel_to_decoder_directions()
+
                 if self.config.clip_gradients:
                     self.grad_scaler.unscale_(self.optimizer)
                     torch.nn.utils.clip_grad_norm_(self.sae_model.parameters(), max_norm=1.0)

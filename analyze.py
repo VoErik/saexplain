@@ -7,7 +7,7 @@ from src.models.sae.sae_utils import (
     plot_activation_histogram,
     plot_dendrogram_with_images,
     analyze_and_cluster_features,
-    get_all_activations
+    get_all_activations, get_umap_decoder_embeddings
 )
 
 
@@ -19,16 +19,18 @@ def run_analysis(
         dataset: str,
         output_path: str,
         aggregation: Literal['mean', 'binary_sum']  = "binary_sum",
-        threshold: float = 0.1,
+        threshold: float = 0.2,
         k: int = 20
 ):
     mod = SAE.load_model(path, device=device)
+
+    get_umap_decoder_embeddings(mod, savedir=output_path)
 
     build_sae_atlas(
         feature_extractor=(feature_extractor, extractor_path),
         sae_model=mod,
         dataset=dataset,
-        sae_dimensions=8192,
+        sae_dimensions=mod.cfg.d_sae,
         k=k,
         device=device,
         output_path=f"{output_path}/sae_atlas",
@@ -37,16 +39,25 @@ def run_analysis(
         batch_size=32
     )
 
+    plot_top_k_images(
+        atlas_path=f"{output_path}/sae_atlas.npz",
+        num_dims_to_plot=10,
+        k_to_show=8,
+        savedir=output_path
+    )
 
-    plot_top_k_images(atlas_path=f"{output_path}/sae_atlas.npz", num_dims_to_plot=10, k_to_show=8, savedir=output_path)
-    plot_activation_histogram(atlas_path=f"{output_path}/sae_atlas.npz", savedir=output_path)
+    plot_activation_histogram(
+        atlas_path=f"{output_path}/sae_atlas.npz",
+        savedir=output_path
+    )
 
     all_activations_tensor = get_all_activations(
-         feature_extractor_name=(feature_extractor, extractor_path),
-         sae_model=mod,
-         dataset_name=dataset,
-         device="cuda",
-         batch_size=64
+        feature_extractor_name=(feature_extractor, extractor_path),
+        sae_model=mod,
+        dataset_name=dataset,
+        device="cuda",
+        batch_size=64,
+        savedir=output_path
      )
 
     linkage_matrix, topk_indices = analyze_and_cluster_features(
@@ -66,8 +77,9 @@ def run_analysis(
      )
 
 
+
 if __name__ == "__main__":
-    sae_path = "checkpoints/sae_fitzpatrick17k_topk_d_in_1024_d_sae_8192_act_topk_k64_auxcoeff_2.0"
+    sae_path = "analysis/sae_model"
     device = "cuda"
     extractor = "dinov3_vitl16"
     extractor_path = "../dinov3"

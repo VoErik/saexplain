@@ -16,6 +16,7 @@ import torchvision
 from src.dataloaders import ImageDataManager
 from src.utils.load_backbone import load_encoder
 import numpy as np
+import umap
 
 
 ######################################
@@ -97,13 +98,17 @@ def build_sae_atlas(
                     heap = atlas_heaps[dim_idx]
 
                     patch_scores = item_activations[:, dim_idx]
-                    active_indices = torch.where(patch_scores > threshold)[0].cpu().tolist()
+                    active_indices_tensor = torch.where(patch_scores > threshold)[0]
+
+                    active_patches_data = [
+                        [idx.item(), patch_scores[idx].item()] for idx in active_indices_tensor
+                    ]
 
                     new_entry = {
                         "score": score,
                         "sae_dimension": dim_idx,
                         "image_path": img_path,
-                        "active_patch_indices": active_indices,
+                        "active_patches": active_patches_data,
                         "label": str(dim_idx)
                     }
 
@@ -158,8 +163,12 @@ def plot_top_k_images(
     k_in_atlas = len(next(iter(atlas.values())))
     k_to_show = min(k_to_show, k_in_atlas)
 
-    fig, axes = plt.subplots(nrows=len(dims_to_plot), ncols=k_to_show, figsize=(k_to_show * 2.5, len(dims_to_plot) * 2.5))
-    if len(dims_to_plot) == 1: axes = [axes]
+    fig, axes = plt.subplots(
+        nrows=len(dims_to_plot),
+        ncols=k_to_show,
+        figsize=(k_to_show * 2.5, len(dims_to_plot) * 2.5),
+        squeeze=False
+    )
 
     for i, dim_idx in enumerate(dims_to_plot):
         top_items = atlas[dim_idx][:k_to_show]
@@ -217,7 +226,8 @@ def get_all_activations(
         device: str,
         batch_size: int = 64,
         aggregation: Literal['mean', 'binary_sum'] = 'binary_sum',
-        threshold: float = 0.01
+        threshold: float = 0.01,
+        savedir: str = "."
 ) -> torch.Tensor:
     """
     Computes aggregated SAE activations for the entire dataset.
@@ -252,6 +262,8 @@ def get_all_activations(
                 scores = aggregate_activations(item_activations, aggregation, threshold)
                 all_scores.append(scores)
 
+    print(f"Saving activation scores to {savedir}/all_activations.pt")
+    torch.save(torch.stack(all_scores, dim=0), f"{savedir}/all_activations.pt")
     return torch.stack(all_scores, dim=0)
 
 def analyze_and_cluster_features(
@@ -369,3 +381,14 @@ def plot_dendrogram_with_images(
     plt.savefig(path, bbox_inches='tight', dpi=300)
     plt.close()
     print(f"✅ Saved dendrogram with images to {path}")
+
+
+def get_umap_decoder_embeddings(sae, savedir):
+    decoder_weights = sae.W_dec.detach().cpu().numpy()
+    print(f"Extracted decoder weights with shape: {decoder_weights.shape}")
+    print("Running UMAP algorithm... (this takes a while)")
+    reducer = umap.UMAP(n_neighbors=15, min_dist=0.1, n_components=2, metric='cosine')
+    embeddings_2d = reducer.fit_transform(decoder_weights)
+    print(f"Computed 2D embeddings with shape: {embeddings_2d.shape}")
+    np.save(f"{savedir}/umap", embeddings_2d)
+    print(f"✅ UMAP embeddings saved successfully to: {savedir}/umap.np")

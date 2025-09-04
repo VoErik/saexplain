@@ -6,7 +6,8 @@ from jaxtyping import Float
 
 from src.models.sae.architectures import (
     TopKSAE,
-    StandardSAE
+    StandardSAE,
+    GatedSAE,
 )
 from src.models.sae.config import TrainingSAEConfig
 from src.models.sae.core import SAE
@@ -26,9 +27,6 @@ from tqdm import tqdm
 import wandb
 from pathlib import Path
 import math
-
-
-
 
 @dataclass
 class TrainStepOutput:
@@ -52,7 +50,6 @@ class TrainStepOutput:
             d["aux_loss"] = self.aux_loss.item()
         return d
 
-
 class TrainingSAEBase(SAE, ABC):
     """
     Abstract base class for SAEs specifically designed for training.
@@ -74,7 +71,6 @@ class TrainingSAEBase(SAE, ABC):
             current_l1_coefficient: float = 0.0,
     ) -> TrainStepOutput:
         pass
-
 
 class TrainingStandardSAE(TrainingSAEBase, StandardSAE):
     """
@@ -116,7 +112,6 @@ class TrainingStandardSAE(TrainingSAEBase, StandardSAE):
             feature_acts=feature_acts if store_activations else None,
             hidden_pre_acts=hidden_pre_acts if store_activations else None
         )
-
 
 class TrainingTopKSAE(TrainingSAEBase, TopKSAE):
     """
@@ -170,21 +165,10 @@ class TrainingTopKSAE(TrainingSAEBase, TopKSAE):
                 )
                 total_loss = total_loss + self.cfg.topk_aux_loss_coefficient * current_aux_loss
 
-        if self.cfg.l1_coefficient > 0:
-            print("Warning: L1 coefficient > 0 used with TopK SAE. This is unconventional.")
-            current_l1_loss = l1_sparsity_loss(feature_acts, self.cfg.l1_coefficient)
-            total_loss = total_loss + current_l1_loss
-
-        current_l1_val = torch.tensor(0.0, device=total_loss.device, dtype=total_loss.dtype)
-        if current_l1_coefficient > 0:
-            print("Warning: L1 coefficient > 0 used with TopK SAE via current_l1_coefficient.")
-            current_l1_val = l1_sparsity_loss(feature_acts, current_l1_coefficient)
-            total_loss = total_loss + current_l1_val
-
         return TrainStepOutput(
             total_loss=total_loss,
             mse_loss=current_mse_loss,
-            l1_sparsity_loss=current_l1_val if current_l1_coefficient > 0 else None,
+            l1_sparsity_loss=None,
             aux_loss=current_aux_loss,
             sae_in=sae_in_device if store_activations else None,
             sae_out=sae_out if store_activations else None,
@@ -192,19 +176,53 @@ class TrainingTopKSAE(TrainingSAEBase, TopKSAE):
             hidden_pre_acts=hidden_pre_acts if store_activations else None
         )
 
+class TrainingGatedSAE(TrainingSAEBase, GatedSAE):
+    """ Training version of the GatedSAE. """
+    cfg: TrainingSAEConfig
+
+    def __init__(self, cfg: TrainingSAEConfig):
+        if cfg.architecture != "gated":
+            raise ValueError("TrainingGatedSAE instantiated with non-'gated' architecture.")
+        TrainingSAEBase.__init__(self, cfg)
+        GatedSAE.__init__(self, cfg)
+
+    def training_forward_pass(
+            self,
+            sae_in: Float[torch.Tensor, "*batch d_in"],
+            dead_neuron_mask: Optional[Float[torch.Tensor, "d_sae"]] = None,
+            store_activations: bool = False,
+            current_l1_coefficient: float = 0.0,
+    ) -> TrainStepOutput:
+
+        sae_in_device = sae_in.to(device=self.device, dtype=self.dtype)
+
+        feature_acts, hidden_pre_acts = self.encode_with_hidden_pre(sae_in_device)
+        sae_out = self.decode(feature_acts)
+
+        current_mse_loss = mse_loss(sae_out, sae_in_device)
+        current_l1_loss = l1_sparsity_loss(feature_acts, current_l1_coefficient)
+        total_loss = current_mse_loss + current_l1_loss
+
+        return TrainStepOutput(
+            total_loss=total_loss,
+            mse_loss=current_mse_loss,
+            l1_sparsity_loss=current_l1_loss,
+            aux_loss=None,
+            sae_in=sae_in_device if store_activations else None,
+            sae_out=sae_out if store_activations else None,
+            feature_acts=feature_acts if store_activations else None,
+            hidden_pre_acts=hidden_pre_acts if store_activations else None
+        )
+
 def get_training_sae(architecture: str, cfg: TrainingSAEConfig) -> TrainingSAEBase:
-    if architecture == "topk":
+    if architecture in ["topk", "batchtopk"]:
         return TrainingTopKSAE(cfg=cfg)
-    elif architecture == "standard":
+    elif architecture in ["standard", "jumprelu"]:
         return TrainingStandardSAE(cfg=cfg)
+    elif architecture == "gated":
+        return TrainingGatedSAE(cfg=cfg)
     else:
         raise NotImplementedError(f"Architecture '{architecture}' not implemented.")
-
-
-# TODO: Implement TrainingJumpReLUSAE
-# TODO: Implement TrainingGatedSAE
-# TODO: Implement TrainingBatchTopKSAE
-
 
 class SAETrainer:
     def __init__(
@@ -406,6 +424,57 @@ class SAETrainer:
 
         self.sae_model.train()
 
+    def _resample_dead_neurons(self, batch_activations: torch.Tensor):
+        with torch.no_grad():
+            dead_indices = torch.where(self.dead_neuron_mask)[0]
+            if len(dead_indices) == 0:
+                return
+
+            print(f"\nResampling {len(dead_indices)} dead neurons.")
+
+            # Forward pass to get reconstruction error for the current batch
+            step_output = self.sae_model.training_forward_pass(batch_activations, store_activations=True)
+            sae_in = step_output.sae_in.reshape(-1, self.config.d_in) # Flatten batch and patch dims
+            sae_out = step_output.sae_out.reshape(-1, self.config.d_in)
+
+            # Calculate loss per token
+            losses = torch.sum((sae_in - sae_out) ** 2, dim=-1)
+
+            # Use squared loss as probability distribution for sampling
+            probs = losses / torch.sum(losses)
+
+            # Sample indices from the batch based on the loss
+            replacement_indices = torch.multinomial(probs, len(dead_indices), replacement=True)
+
+            replacement_vectors = sae_in[replacement_indices].to(self.device)
+            replacement_vectors_normalized = replacement_vectors / (torch.norm(replacement_vectors, dim=-1, keepdim=True) + 1e-8)
+
+            for i, neuron_idx in enumerate(dead_indices):
+                # Re-initialize weights
+                self.sae_model.W_dec.data[neuron_idx, :] = replacement_vectors_normalized[i]
+                self.sae_model.W_enc.data[:, neuron_idx] = replacement_vectors_normalized[i]
+                self.sae_model.b_enc.data[neuron_idx] = 0.0
+
+                # Reset optimizer states for the specific parameters
+                for p_group in self.optimizer.param_groups:
+                    for p in p_group['params']:
+                        if p.grad is not None:
+                            # For W_enc
+                            if p is self.sae_model.W_enc:
+                                self.optimizer.state[p]['exp_avg'][:, neuron_idx] = 0
+                                self.optimizer.state[p]['exp_avg_sq'][:, neuron_idx] = 0
+                            # For W_dec
+                            elif p is self.sae_model.W_dec:
+                                self.optimizer.state[p]['exp_avg'][neuron_idx] = 0
+                                self.optimizer.state[p]['exp_avg_sq'][neuron_idx] = 0
+                            # For b_enc
+                            elif p is self.sae_model.b_enc:
+                                self.optimizer.state[p]['exp_avg'][neuron_idx] = 0
+                                self.optimizer.state[p]['exp_avg_sq'][neuron_idx] = 0
+
+            # Reset the dead neuron tracker for the resampled neurons
+            self.n_forward_passes_since_fired[dead_indices] = 0
+
     def train(self, num_epochs: int = 1):
         if num_epochs <= 0: raise ValueError("Number of epochs must be positive.")
         self.sae_model.train()
@@ -460,6 +529,10 @@ class SAETrainer:
                 self.grad_scaler.update()
 
                 self.total_optimizer_steps += 1
+
+                if (self.config.dead_feature_resampling_interval is not None and
+                        self.total_optimizer_steps % self.config.dead_feature_resampling_interval == 0):
+                    self._resample_dead_neurons(batch_activations)
 
                 if self.lr_scheduler.optimizer == self.optimizer:
                     self.lr_scheduler.step()

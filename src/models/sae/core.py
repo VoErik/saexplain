@@ -1,8 +1,9 @@
 from pathlib import Path
-from typing import Tuple, Any
+from typing import Tuple, Any, Literal
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from abc import ABC, abstractmethod
 from jaxtyping import Float
 
@@ -17,22 +18,53 @@ class TopK(nn.Module):
         postact_fn_str (str): Name of the post-activation function.
         **postact_kwargs: Additional keyword arguments to pass to the post-activation function.
     """
-    def __init__(self, k: int, postact_fn_str: str = "relu", **postact_fn_kwargs: Any):
+    def __init__(
+            self,
+            k: int, postact_fn_str: str = "relu",
+            mode: Literal["instance", "batch"] = "instance",
+            **postact_fn_kwargs: Any):
         super().__init__()
         if not isinstance(k, int) or k <= 0:
             raise ValueError(f"k must be a positive integer, got {k}")
         self.k = k
         self.postact_fn = get_activation_fn(postact_fn_str, **postact_fn_kwargs)
+        self.mode = mode
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        topk = torch.topk(x, k=self.k, dim=-1)
-        values = self.postact_fn(topk.values)
-        result = torch.zeros_like(x)
-        result.scatter_(-1, topk.indices, values)
+        if self.mode == "instance":
+            topk = torch.topk(x, k=self.k, dim=-1)
+            values = self.postact_fn(topk.values)
+            result = torch.zeros_like(x)
+            result.scatter_(-1, topk.indices, values)
+        elif self.mode == "batch":
+            B, P, D = x.shape
+            x_flat = x.view(B, P * D)
+            topk_values, topk_indices_flat = torch.topk(x_flat, self.k, dim=-1)
+            result_flat = torch.zeros_like(x_flat)
+            result_flat.scatter_(-1, topk_indices_flat, self.postact_fn(topk_values))
+            result = result_flat.view(B, P, D)
+        else:
+            raise ValueError(f"{self.mode} not recognized.")
         return result
 
     def __repr__(self):
-        return f"TopK(k={self.k}, postact_fn={self.postact_fn})"
+        return f"TopK(k={self.k}, postact_fn={self.postact_fn}, mode={self.mode})"
+
+class JumpReLU(nn.Module):
+    """
+    Implements Jump ReLU activation: max(ReLU(x - b_jump), alpha * (x - b_jump)).
+    Includes a learnable jump bias parameter.
+    """
+    def __init__(self, d_sae: int, alpha: float = 0.01):
+        super().__init__()
+        self.alpha = alpha
+        self.b_jump = nn.Parameter(torch.zeros(d_sae))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        jump_input = x - self.b_jump
+        relu_part = F.relu(jump_input)
+        jump_part = self.alpha * jump_input
+        return torch.max(relu_part, jump_part)
 
 def get_activation_fn(
         activation_fn_str: str, **kwargs: Any
@@ -61,12 +93,19 @@ def get_activation_fn(
                 return torch.tanh(torch.relu(x))
         return TanhReLU(**kwargs)
     elif fn_str_lower == "topk":
-        k_value = kwargs.pop("k", None)
+        k_value = kwargs.pop("k", 32)
         if k_value is not None:
             postact_fn_str = kwargs.pop("postact_fn_str", "relu")
-            return TopK(k=k_value, postact_fn_str=postact_fn_str, **kwargs)
+            mode = kwargs.pop("topk_mode", "instance")
+            return TopK(k=k_value, postact_fn_str=postact_fn_str, mode=mode, **kwargs)
         else:
             raise ValueError("TopK activation function requires a 'k' value in activation_fn_kwargs.")
+    elif fn_str_lower == "jumprelu":
+        d_sae = kwargs.pop("d_sae")
+        if d_sae <= 0:
+            raise ValueError("d_sae must be provided for JumpReLU activation.")
+        alpha = kwargs.pop("alpha", 0.01)
+        return JumpReLU(d_sae=d_sae, alpha=alpha)
     else:
         raise ValueError(f"Unsupported activation function: {activation_fn_str}")
 
@@ -85,7 +124,7 @@ class SAE(nn.Module, ABC):
         super().__init__()
         self.cfg = cfg
         self.activation_fn = get_activation_fn(
-            self.cfg.activation_fn_str, **self.cfg.activation_fn_kwargs
+            self.cfg.activation_fn_str, d_sae=self.cfg.d_sae, **self.cfg.activation_fn_kwargs
         )
 
 

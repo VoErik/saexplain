@@ -42,16 +42,17 @@ class StandardSAE(SAE):
         """
         Initializes the weights and biases of the SAE based on activation function.
         """
-        if self.cfg.activation_fn_str in ["relu", "topk"]:
-            nn.init.kaiming_uniform_(self.W_enc, a=0, mode='fan_in', nonlinearity='relu')
-            nn.init.kaiming_uniform_(self.W_dec, a=0, mode='fan_in', nonlinearity='relu')
-        elif self.cfg.activation_fn_str in ["tanh", "sigmoid"]:
+        if self.cfg.activation_fn_str in ["relu", "topk", "jumprelu"]:
+            nonlinearity = "relu"
+        else:
+            nonlinearity = "linear"
+
+        if self.cfg.activation_fn_str in ["tanh", "sigmoid"]:
             nn.init.xavier_uniform_(self.W_enc)
             nn.init.xavier_uniform_(self.W_dec)
         else:
-            raise NotImplementedError(
-                f"Initialization scheme not implemented for this activation_fn: {self.cfg.activation_fn_str}."
-            )
+            nn.init.kaiming_uniform_(self.W_enc, a=0, mode='fan_in', nonlinearity=nonlinearity)
+            nn.init.kaiming_uniform_(self.W_dec, a=0, mode='fan_in', nonlinearity=nonlinearity)
 
         nn.init.zeros_(self.b_enc)
         nn.init.zeros_(self.b_dec)
@@ -112,29 +113,49 @@ class TopKSAE(StandardSAE):
             print(f"Warning: TopKSAE initialized with activation_fn_str='{cfg.activation_fn_str}'. "
                   "Ensure this is intended and 'k' is provided in activation_fn_kwargs.")
 
-
-###################################################################################
-################################### BATCHTOPK #####################################
-###################################################################################
-
-class BatchTopKSAE(StandardSAE):
-    ...
-
-
-
-
 ###################################################################################
 ##################################### GATED #######################################
 ###################################################################################
 
-class GatedSAE(SAE):
-    ...
+class GatedSAE(StandardSAE):
+    """
+    A Gated Sparse Autoencoder.
+    This architecture adds a learned gate to control feature activation,
+    which can lead to better feature disentanglement.
+    """
+    W_gate: nn.Parameter
+    b_gate: nn.Parameter
 
+    def __init__(self, cfg: SAEConfig | TrainingSAEConfig):
+        super().__init__(cfg)
+        self.W_gate = nn.Parameter(torch.empty(cfg.d_in, cfg.d_sae))
+        self.b_gate = nn.Parameter(torch.empty(cfg.d_sae))
 
+        # Gated SAEs often use Glorot uniform initialization
+        nn.init.xavier_uniform_(self.W_gate)
+        nn.init.zeros_(self.b_gate)
 
-###################################################################################
-################################### JUMPRELU ######################################
-###################################################################################
+    def encode_with_hidden_pre(
+            self,
+            x: Float[torch.Tensor, "*batch d_in"]
+    ) -> Tuple[Float[torch.Tensor, "*batch d_sae"], Float[torch.Tensor, "*batch d_sae"]]:
+        """Returns both pre-activation function features and post activation function features."""
+        x_processed = x.to(dtype=self.dtype, device=self.device)
+        if self.cfg.apply_b_dec_to_input:
+            input_centered = x_processed - self.b_dec
+        else:
+            input_centered = x_processed
 
-class JumpReLUSAE(SAE):
-    ...
+        hidden_pre = einops.einsum(
+            input_centered, self.W_enc, "... d_in, d_in d_sae -> ... d_sae"
+        ) + self.b_enc
+
+        gate_pre = einops.einsum(
+            input_centered, self.W_gate, "... d_in, d_in d_sae -> ... d_sae"
+        ) + self.b_gate
+        gate = torch.sigmoid(gate_pre)
+
+        feature_activations = self.activation_fn(hidden_pre) * gate
+
+        return feature_activations, hidden_pre
+

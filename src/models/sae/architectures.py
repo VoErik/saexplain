@@ -95,6 +95,33 @@ class StandardSAE(SAE):
 
         return reconstruction
 
+    @torch.no_grad()
+    def set_decoder_norm_to_unit_norm(self):
+        self.W_dec.data /= torch.norm(self.W_dec.data, dim=1, keepdim=True)
+
+    @torch.no_grad()
+    def remove_gradient_parallel_to_decoder_directions(self):
+        """
+        Removes the component of the gradient parallel to the decoder directions.
+        This is used to ensure that the decoder weights remain on the unit sphere.
+        """
+        if self.W_dec.grad is None:
+            return
+
+        # Project the gradient onto the decoder vectors
+        parallel_component = einops.einsum(
+            self.W_dec.grad,
+            self.W_dec.data,
+            "d_sae d_in, d_sae d_in -> d_sae",
+        )
+
+        # Subtract the parallel component from the gradient
+        self.W_dec.grad -= einops.einsum(
+            parallel_component,
+            self.W_dec.data,
+            "d_sae, d_sae d_in -> d_sae d_in",
+        )
+
 ###################################################################################
 ##################################### TOPK ########################################
 ###################################################################################
@@ -107,11 +134,15 @@ class TopKSAE(StandardSAE):
     """
     def __init__(self, cfg: SAEConfig | TrainingSAEConfig):
         super().__init__(cfg)
-        if cfg.architecture != "topk":
+        if cfg.architecture not in ["topk", "batchtopk"]:
             raise ValueError("TopKSAE class instantiated with non-'topk' architecture in config.")
         if cfg.activation_fn_str.lower() != "topk":
             print(f"Warning: TopKSAE initialized with activation_fn_str='{cfg.activation_fn_str}'. "
                   "Ensure this is intended and 'k' is provided in activation_fn_kwargs.")
+        if cfg.architecture == "batchtopk":
+            cfg.topk_mode = "batch"
+        else:
+            cfg.topk_mode = "instance"
 
 ###################################################################################
 ##################################### GATED #######################################

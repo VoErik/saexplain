@@ -78,20 +78,20 @@ def get_activation_fn(
     """
     fn_str_lower = activation_fn_str.lower()
     if fn_str_lower == "relu":
-        return nn.ReLU(**kwargs)
+        return nn.ReLU()
     elif fn_str_lower == "gelu":
-        return nn.GELU(**kwargs)
+        return nn.GELU()
     elif fn_str_lower == "silu" or fn_str_lower == "swish":
-        return nn.SiLU(**kwargs)
+        return nn.SiLU()
     elif fn_str_lower == "tanh":
-        return nn.Tanh(**kwargs)
+        return nn.Tanh()
     elif fn_str_lower == "sigmoid":
-        return nn.Sigmoid(**kwargs)
+        return nn.Sigmoid()
     elif fn_str_lower == "tanh-relu": # from sae lens --> first ReLU, then Tanh
         class TanhReLU(nn.Module):
             def forward(self, x: torch.Tensor) -> torch.Tensor:
                 return torch.tanh(torch.relu(x))
-        return TanhReLU(**kwargs)
+        return TanhReLU()
     elif fn_str_lower == "topk":
         k_value = kwargs.pop("k", 32)
         if k_value is not None:
@@ -172,9 +172,6 @@ class SAE(nn.Module, ABC):
         reconstruction = self.decode(features)
         return reconstruction
 
-    @torch.no_grad()
-    def set_decoder_norm_to_unit_norm(self):
-        self.W_dec.data /= torch.norm(self.W_dec.data, dim=1, keepdim=True)
 
     @property
     def device(self) -> torch.device:
@@ -204,13 +201,13 @@ class SAE(nn.Module, ABC):
             f"act_{self.cfg.activation_fn_str}"
         ]
         if (hasattr(self.cfg, 'activation_fn_kwargs') and ('k' in self.cfg.activation_fn_kwargs)
-                and (self.cfg.architecture == "topk")):
+                and (self.cfg.architecture in ["topk", "batchtopk"])):
             name_parts.append(f"k{self.cfg.activation_fn_kwargs['k']}")
         if hasattr(self.cfg, 'embedding_source_name') and self.cfg.embedding_source_name:
             name_parts.insert(1, self.cfg.embedding_source_name)
         if isinstance(self.cfg, TrainingSAEConfig):
-            if self.cfg.architecture != "topk": name_parts.append(f"l1_{self.cfg.l1_coefficient}")
-            if self.cfg.architecture == "topk": name_parts.append(f"auxcoeff_{self.cfg.topk_aux_loss_coefficient}")
+            if self.cfg.architecture not in ["topk", "batchtopk"]: name_parts.append(f"l1_{self.cfg.l1_coefficient}")
+            if self.cfg.architecture in ["topk", "batchtopk"]: name_parts.append(f"auxcoeff_{self.cfg.topk_aux_loss_coefficient}")
         return "_".join(name_parts)
 
     def save_model(self, dir_path: str | Path):

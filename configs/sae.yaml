@@ -6,7 +6,7 @@ sae:
   activation_fn_kwargs:
     k: 20
     postact_fn_str: "relu"
-  lr: 0.0005
+  lr: 0.0004
   lr_end_factor: 0.0
   lr_scheduler_name: null
   lr_warm_up_steps: 500
@@ -15,8 +15,8 @@ sae:
   dead_feature_window: 1000
   topk_aux_loss_coefficient: 2.0
   aux_k: null
-  l1_coefficient: 0.0
-  initial_l1_coefficient: 0.0
+  l1_coefficient: 0.00008
+  initial_l1_coefficient: 0.0001
   l1_warm_up_steps: 1000
   embedding_source_name: "fitzpatrick17k"
   eval_batch_size: 32
@@ -26,9 +26,8 @@ sae:
   wandb_dir: "./experiments"
   wandb_project: "thesis"
   wandb_entity: "voerik"
-  wandb_run_name: "dinov3_topk_1024_expansion_10"
   wandb_log_frequency_steps: 500
-  n_checkpoints: 5
+  n_checkpoints: 0
   checkpoint_path: "./checkpoints/"
 
 activation_store:

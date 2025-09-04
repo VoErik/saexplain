@@ -9,7 +9,7 @@ import torch
 from tqdm import tqdm
 
 from src.models.sae import VisionActivationStore
-from src.models.sae.architectures import StandardSAE, TopKSAE
+from src.models.sae.architectures import StandardSAE, TopKSAE, GatedSAE
 from src.models.sae.config import load_config_from_dict
 
 ###################################################################################
@@ -31,6 +31,7 @@ SAE_CFG_FILENAME = "cfg.json"
 SAE_MAP = {
     "standard": StandardSAE,
     "topk": TopKSAE,
+    "gated": GatedSAE,
 }
 
 ###################################################################################

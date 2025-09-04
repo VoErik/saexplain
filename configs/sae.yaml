@@ -13,6 +13,7 @@ sae:
   train_batch_size: 64
   clip_gradients: false
   dead_feature_window: 1000
+  dead_feature_resampling_interval: 2000
   topk_aux_loss_coefficient: 2.0
   aux_k: null
   l1_coefficient: 0.00008

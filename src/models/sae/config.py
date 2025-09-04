@@ -14,7 +14,13 @@ class SAEConfig:
     activation_fn_kwargs: dict[str, Any] = field(default_factory=dict)
     apply_b_dec_to_input: bool = True
     embedding_source_name: str | None = None
-    architecture: Literal["standard", "topk"] = "standard"
+    architecture: Literal[
+        "standard",
+        "topk",
+        "jumprelu", 
+        "batchtopk",
+        "gated"
+    ] = "standard"
 
 
     def __post_init__(self):
@@ -57,7 +63,7 @@ class TrainingSAEConfig(SAEConfig):
     l1_coefficient: float = 0.001
     initial_l1_coefficient: float = 0.0
     l1_warm_up_steps: int = 1000
-    lr: float = 1e-3
+    lr: float = 4e-4
     lr_end_factor: float = 0.0 # 0.1 would be 10% of initial lr
     lr_scheduler_name: str | None = "cosine_warmup_restarts"
     lr_warm_up_steps: int = 500
@@ -66,12 +72,17 @@ class TrainingSAEConfig(SAEConfig):
     total_training_steps: int | None = 30000
     clip_gradients: bool = False
 
-    dead_feature_window: int = 10000 # convention for LLM SAEs -> change to smaller val probably
-    # feature_sampling_window: int = 2000 # How often to log/reset sparsity stats (for later)
+    b_dec_init_method: Literal["zeros", "mean", "geometric_median"] = "zeros"
+
+    dead_feature_window: int = 2000 # convention for LLM SAEs -> change to smaller val probably
+    dead_feature_resampling_interval: int = 2000 # How often to log/reset sparsity stats (for later)
 
     # TopK specific parameters
     topk_aux_loss_coefficient: float = 1.0
     aux_k: int | None = None # Number of top dead features to use in aux loss. If None, use d_sae // 2 or similar.
+
+    # JumpReLU
+    jump_relu_alpha: float = 0.1
 
     # Checkpointing
     n_checkpoints: int = 5

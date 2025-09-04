@@ -133,6 +133,10 @@ class SAE(nn.Module, ABC):
         reconstruction = self.decode(features)
         return reconstruction
 
+    @torch.no_grad()
+    def set_decoder_norm_to_unit_norm(self):
+        self.W_dec.data /= torch.norm(self.W_dec.data, dim=1, keepdim=True)
+
     @property
     def device(self) -> torch.device:
         """Returns the device of the model's parameters."""

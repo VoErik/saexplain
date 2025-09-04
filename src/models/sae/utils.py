@@ -1,11 +1,14 @@
 import json
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Literal
 
 import yaml
 from safetensors.torch import save_file, load_file
 
 import torch
+from tqdm import tqdm
+
+from src.models.sae import VisionActivationStore
 from src.models.sae.architectures import StandardSAE, TopKSAE
 from src.models.sae.config import load_config_from_dict
 
@@ -123,3 +126,47 @@ def load_configs_from_yaml(yaml_path: str) -> Dict[str, dict]:
         "activation_store": act_cfg,
         "feature_extractor": feat_cfg
     }
+
+
+def compute_geometric_median(points: torch.Tensor, max_iter: int = 100, tol: float = 1e-5) -> torch.Tensor:
+    """
+    Computes the geometric median of a set of points using Weiszfeld's algorithm.
+    """
+    median = torch.mean(points, dim=0)
+    for _ in range(max_iter):
+        prev_median = median.clone()
+        distances = torch.norm(points - median, dim=1)
+
+        # Avoid division by zero for points that are at the current median
+        inv_distances = 1.0 / distances
+        inv_distances[distances == 0] = 0
+
+        weights = inv_distances / torch.sum(inv_distances)
+        median = torch.sum(points * weights.unsqueeze(1), dim=0)
+
+        if torch.norm(median - prev_median) < tol:
+            break
+
+    return median
+
+def get_data_center(
+        activation_store: VisionActivationStore,
+        method: Literal["zeros", "mean", "geometric_median"]
+) -> torch.Tensor:
+    """
+    Computes the center of the dataset in the activation store.
+    """
+    print(f"Computing data center using method: {method}")
+
+    # Concatenate all patches into a single tensor
+    all_patches = torch.cat(
+        [batch.reshape(-1, activation_store.d_in) for batch in tqdm(activation_store, desc="Loading data for centering")],
+        dim=0
+    )
+
+    if method == "mean":
+        return torch.mean(all_patches, dim=0)
+    elif method == "geometric_median":
+        return compute_geometric_median(all_patches)
+    else:
+        raise ValueError(f"Unknown data centering method: {method}")

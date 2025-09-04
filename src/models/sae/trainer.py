@@ -95,6 +95,7 @@ class TrainingStandardSAE(TrainingSAEBase, StandardSAE):
             store_activations: bool = False,
             current_l1_coefficient: float = 0.0,
     ) -> TrainStepOutput:
+
         sae_in_device = sae_in.to(device=self.device, dtype=self.dtype)
 
         feature_acts, hidden_pre_acts = self.encode_with_hidden_pre(sae_in_device)
@@ -238,6 +239,9 @@ class SAETrainer:
         else:
             print("No evaluation activation store provided. Skipping evaluation during training.")
 
+        # set lr
+        self.config.lr = self.config.lr * (self.config.train_batch_size / 256)
+
         self.optimizer = optim.AdamW(self.sae_model.parameters(), lr=self.config.lr)
 
         # Initialize LR Scheduler
@@ -364,7 +368,7 @@ class SAETrainer:
                 'config': self.config.to_dict(),
                 'epoch': epoch,
             }
-            torch.save(checkpoint_data, str(full_checkpoint_path) + ".pt")  # Using .pt for torch.save
+            torch.save(checkpoint_data, str(full_checkpoint_path) + ".pt")
             self.checkpoint_save_paths.append(full_checkpoint_path)
             print(f"Saved checkpoint: {full_checkpoint_path}.pt")
 
@@ -413,7 +417,8 @@ class SAETrainer:
 
         if self.config.log_to_wandb and wandb.run:
             wandb.config.update(
-                {"derived_total_training_steps": self.actual_total_training_steps, "num_epochs_over_data": num_epochs})
+                {"derived_total_training_steps": self.actual_total_training_steps, "num_epochs_over_data": num_epochs}
+            )
 
         for epoch in range(1, num_epochs + 1):
             if self.total_optimizer_steps >= self.actual_total_training_steps:
@@ -434,7 +439,7 @@ class SAETrainer:
                 current_batch_size = batch_activations.shape[0]
                 current_dead_neuron_mask = self.dead_neuron_mask
                 current_l1_for_loss = self._get_current_l1_coeff_for_loss()
-
+                self.sae_model.set_decoder_norm_to_unit_norm()
                 with torch.amp.autocast("cuda",
                                         dtype=self.autocast_dtype,
                                         enabled=self.grad_scaler.is_enabled()):
@@ -475,7 +480,7 @@ class SAETrainer:
 
                     progress_bar.set_postfix(
                         {k: f"{v:.4e}" if isinstance(v, float) and abs(v) < 1e-3 or abs(v) > 1e4 else v for k, v in
-                         log_data.items() if k not in ["epoch", "batch_in_epoch"]})  # Custom formatting
+                         log_data.items() if k not in ["epoch", "batch_in_epoch"]})
                     if self.config.log_to_wandb and wandb.run:
                         wandb.log(log_data, step=self.total_optimizer_steps)
 

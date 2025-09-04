@@ -6,6 +6,10 @@ sae:
   activation_fn_kwargs:
     k: 20
     postact_fn_str: "relu"
+  topk_mode: "instance"
+  b_dec_init_method: "geometric_median"
+  use_decoder_unit_norm: true
+  remove_parallel_gradients: true # use only when setting decoder to unit norm
   lr: 0.0004
   lr_end_factor: 0.0
   lr_scheduler_name: null

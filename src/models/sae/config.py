@@ -17,7 +17,7 @@ class SAEConfig:
     architecture: Literal[
         "standard",
         "topk",
-        "jumprelu", 
+        "jumprelu",
         "batchtopk",
         "gated"
     ] = "standard"
@@ -71,6 +71,8 @@ class TrainingSAEConfig(SAEConfig):
     train_batch_size: int = 32
     total_training_steps: int | None = 30000
     clip_gradients: bool = False
+    use_decoder_unit_norm: bool = True
+    remove_parallel_gradients: bool = True # only if use_decoder_unit_norm
 
     b_dec_init_method: Literal["zeros", "mean", "geometric_median"] = "zeros"
 
@@ -80,6 +82,7 @@ class TrainingSAEConfig(SAEConfig):
     # TopK specific parameters
     topk_aux_loss_coefficient: float = 1.0
     aux_k: int | None = None # Number of top dead features to use in aux loss. If None, use d_sae // 2 or similar.
+    topk_mode: str = "instance"
 
     # JumpReLU
     jump_relu_alpha: float = 0.1

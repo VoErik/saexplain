@@ -21,8 +21,8 @@ if __name__ == '__main__':
     cfg_dicts = load_configs_from_yaml(args.config)
     device = torch.device(args.device)
 
-    ARCHS = ["standard", "topk"]
-    EXPANSION_FACTORS = [32]
+    ARCHS = ["topk"]
+    EXPANSION_FACTORS = [16]
     KS = [32, 64, 128]
 
     for arch in ARCHS:

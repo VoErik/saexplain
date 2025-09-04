@@ -8,7 +8,7 @@ from src.models.sae.activation_store import VisionActivationStore
 from src.models.sae.config import TrainingSAEConfig
 from src.models.sae.core import SAE
 from src.models.sae.trainer import SAETrainer, get_training_sae
-from src.models.sae.utils import load_configs_from_yaml
+from src.models.sae.utils import load_configs_from_yaml, get_data_center
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--config', default='./configs/sae.yaml')
@@ -59,6 +59,11 @@ if __name__ == '__main__':
                     extraction_batch_size=act_store_cfg["extraction_batch_size"],
                     shuffle_each_epoch=True,
                 )
+
+                if sae_cfg.b_dec_init_method != "zeros":
+                    data_center = get_data_center(train_activation_store, sae_cfg.b_dec_init_method)
+                    sae_model.b_dec.data = data_center.to(device)
+                    print(f"Initialized b_dec with {sae_cfg.b_dec_init_method}.")
 
                 eval_activation_store = VisionActivationStore(
                     dataset_name=act_store_cfg["eval_dataset_name"],

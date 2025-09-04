@@ -1,8 +1,6 @@
 from src.models.sae.activation_store import VisionActivationStore
 from src.models.sae.architectures import (
-    BatchTopKSAE,
     GatedSAE,
-    JumpReLUSAE,
     TopKSAE,
     StandardSAE,
 )
@@ -13,9 +11,7 @@ from src.models.sae.trainer import SAETrainer
 
 
 __all__ = [
-    "BatchTopKSAE",
     "GatedSAE",
-    "JumpReLUSAE",
     "SAEConfig",
     "SAEEvaluator",
     "SAETrainer",

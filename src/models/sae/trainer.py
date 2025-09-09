@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional
 import torch
 from jaxtyping import Float
+from torch import nn
 
 from src.models.sae.architectures import (
     TopKSAE,
@@ -177,14 +178,46 @@ class TrainingTopKSAE(TrainingSAEBase, TopKSAE):
         )
 
 class TrainingGatedSAE(TrainingSAEBase, GatedSAE):
-    """ Training version of the GatedSAE. """
+    """ Training version of the DeepMind-style GatedSAE. """
     cfg: TrainingSAEConfig
 
     def __init__(self, cfg: TrainingSAEConfig):
         if cfg.architecture != "gated":
-            raise ValueError("TrainingGatedSAE instantiated with non-'gated' architecture.")
+            raise ValueError("TrainingGatedSAE requires cfg.architecture == 'gated'")
         TrainingSAEBase.__init__(self, cfg)
         GatedSAE.__init__(self, cfg)
+
+    def calculate_aux_loss(
+            self,
+            sae_in: torch.Tensor,
+            current_l1_coefficient: float,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Computes:
+          - Weighted L1 penalty (gate activations × decoder norms)
+          - Auxiliary reconstruction loss (from gate path only)
+        """
+        if self.cfg.apply_b_dec_to_input:
+            sae_in_centered = sae_in - self.b_dec
+        else:
+            sae_in_centered = sae_in
+
+        # Gate pre-activations
+        pi_gate = sae_in_centered @ self.W_enc + self.b_gate
+        pi_gate_act = torch.relu(pi_gate)
+
+        # Weighted L1 penalty
+        W_dec_norms = self.W_dec.norm(dim=1)  # shape (d_sae,)
+        l1_loss = (
+                current_l1_coefficient
+                * (pi_gate_act * W_dec_norms).sum(dim=-1).mean()
+        )
+
+        # Aux reconstruction using only gate path
+        via_gate_reconstruction = pi_gate_act @ self.W_dec + self.b_dec
+        aux_recon_loss = ((via_gate_reconstruction - sae_in) ** 2).sum(dim=-1).mean()
+
+        return l1_loss, aux_recon_loss
 
     def training_forward_pass(
             self,
@@ -193,25 +226,32 @@ class TrainingGatedSAE(TrainingSAEBase, GatedSAE):
             store_activations: bool = False,
             current_l1_coefficient: float = 0.0,
     ) -> TrainStepOutput:
+        sae_in = sae_in.to(device=self.device, dtype=self.dtype)
 
-        sae_in_device = sae_in.to(device=self.device, dtype=self.dtype)
-
-        feature_acts, hidden_pre_acts = self.encode_with_hidden_pre(sae_in_device)
+        # Encode + decode
+        feature_acts, hidden_pre_acts = self.encode_with_hidden_pre(sae_in)
         sae_out = self.decode(feature_acts)
 
-        current_mse_loss = mse_loss(sae_out, sae_in_device)
-        current_l1_loss = l1_sparsity_loss(feature_acts, current_l1_coefficient)
-        total_loss = current_mse_loss + current_l1_loss
+        # Main MSE loss
+        mse_loss_val = nn.functional.mse_loss(sae_out, sae_in)
+
+        # Aux losses
+        l1_loss_val, aux_recon_loss_val = self.calculate_aux_loss(
+            sae_in, current_l1_coefficient
+        )
+
+        # Total loss
+        total_loss = mse_loss_val + l1_loss_val + aux_recon_loss_val
 
         return TrainStepOutput(
             total_loss=total_loss,
-            mse_loss=current_mse_loss,
-            l1_sparsity_loss=current_l1_loss,
-            aux_loss=None,
+            mse_loss=mse_loss_val,
+            l1_sparsity_loss=l1_loss_val,
+            aux_loss=aux_recon_loss_val,
             sae_in=sae_in_device if store_activations else None,
             sae_out=sae_out if store_activations else None,
             feature_acts=feature_acts if store_activations else None,
-            hidden_pre_acts=hidden_pre_acts if store_activations else None
+            hidden_pre_acts=hidden_pre_acts if store_activations else None,
         )
 
 def get_training_sae(architecture: str, cfg: TrainingSAEConfig) -> TrainingSAEBase:
@@ -540,6 +580,7 @@ class SAETrainer:
 
                 if (self.config.dead_feature_resampling_interval is not None and
                         self.total_optimizer_steps % self.config.dead_feature_resampling_interval == 0):
+                    print("Resampling neurons if necessary...")
                     self._resample_dead_neurons(batch_activations)
 
                 if self.lr_scheduler.optimizer == self.optimizer:

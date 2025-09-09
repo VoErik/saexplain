@@ -141,8 +141,10 @@ class TopKSAE(StandardSAE):
                   "Ensure this is intended and 'k' is provided in activation_fn_kwargs.")
         if cfg.architecture == "batchtopk":
             cfg.topk_mode = "batch"
+            print(f"Using {cfg.topk_mode}.")
         else:
             cfg.topk_mode = "instance"
+
 
 ###################################################################################
 ##################################### GATED #######################################
@@ -150,43 +152,56 @@ class TopKSAE(StandardSAE):
 
 class GatedSAE(StandardSAE):
     """
-    A Gated Sparse Autoencoder.
-    This architecture adds a learned gate to control feature activation,
-    which can lead to better feature disentanglement.
+    DeepMind-style Gated Sparse Autoencoder.
+
+    Inherits from StandardSAE but overrides the encoder to use:
+      - Gating path (binary mask from shared W_enc + b_gate)
+      - Magnitude path (rescaled W_enc with r_mag, plus b_mag)
     """
-    W_gate: nn.Parameter
+
     b_gate: nn.Parameter
+    b_mag: nn.Parameter
+    r_mag: nn.Parameter
 
     def __init__(self, cfg: SAEConfig | TrainingSAEConfig):
         super().__init__(cfg)
-        self.W_gate = nn.Parameter(torch.empty(cfg.d_in, cfg.d_sae))
-        self.b_gate = nn.Parameter(torch.empty(cfg.d_sae))
 
-        # Gated SAEs often use Glorot uniform initialization
-        nn.init.xavier_uniform_(self.W_gate)
-        nn.init.zeros_(self.b_gate)
+        # Gated SAEs don't use b_enc
+        self.b_enc = None
+
+        # Additional gated parameters
+        self.b_gate = nn.Parameter(torch.zeros(cfg.d_sae))
+        self.b_mag = nn.Parameter(torch.zeros(cfg.d_sae))
+        self.r_mag = nn.Parameter(torch.zeros(cfg.d_sae))  # log scaling
 
     def encode_with_hidden_pre(
             self,
-            x: Float[torch.Tensor, "*batch d_in"]
+            x: Float[torch.Tensor, "*batch d_in"],
     ) -> Tuple[Float[torch.Tensor, "*batch d_sae"], Float[torch.Tensor, "*batch d_sae"]]:
-        """Returns both pre-activation function features and post activation function features."""
+        """Returns both post-gating activations and the magnitude pre-activations."""
+
         x_processed = x.to(dtype=self.dtype, device=self.device)
         if self.cfg.apply_b_dec_to_input:
             input_centered = x_processed - self.b_dec
         else:
             input_centered = x_processed
 
-        hidden_pre = einops.einsum(
+        # Gating path
+        gating_pre = einops.einsum(
             input_centered, self.W_enc, "... d_in, d_in d_sae -> ... d_sae"
-        ) + self.b_enc
-
-        gate_pre = einops.einsum(
-            input_centered, self.W_gate, "... d_in, d_in d_sae -> ... d_sae"
         ) + self.b_gate
-        gate = torch.sigmoid(gate_pre)
+        active = (gating_pre > 0).to(self.dtype)
 
-        feature_activations = self.activation_fn(hidden_pre) * gate
+        # Magnitude path
+        magnitude_pre = einops.einsum(
+            input_centered,
+            self.W_enc * self.r_mag.exp(),
+            "... d_in, d_in d_sae -> ... d_sae",
+            ) + self.b_mag
+        feature_magnitudes = self.activation_fn(magnitude_pre)
 
-        return feature_activations, hidden_pre
+        # Final gated activations
+        feature_activations = active * feature_magnitudes
+
+        return feature_activations, magnitude_pre
 

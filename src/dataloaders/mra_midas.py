@@ -6,7 +6,7 @@ from PIL import Image
 
 import pandas as pd
 import re
-
+from tqdm import tqdm # <-- Import for a progress bar
 
 class MRAMIDAS(torch.utils.data.Dataset):
     def __init__(self, root: str, transform=None):
@@ -17,6 +17,7 @@ class MRAMIDAS(torch.utils.data.Dataset):
         self.metadata_path = Path(self.root) / "release_midas.xlsx"
 
         df = pd.read_excel(self.metadata_path)
+        # --- Clean up metadata as before ---
         df["midas_path"] = df["midas_path"].fillna("No finding").astype(str)
         df['midas_file_name'] = df['midas_file_name'].str.replace('.jpeg', '.jpg', regex=False)
         df["midas_age"] = df["midas_age"].fillna("Unknown").astype(str)
@@ -24,17 +25,29 @@ class MRAMIDAS(torch.utils.data.Dataset):
         df["midas_race"] = df["midas_race"].fillna("Unknown").astype(str)
         df["midas_location"] = df["midas_location"].fillna("Unknown").astype(str)
         df["midas_melanoma"] = df["midas_melanoma"].fillna("Unknown").astype(str)
-        idxs_to_drop = [
-            283, 313, 464, 604, 651, 661, 674, 686, 796, 797, 811, 834, 889, 904, 906, 907,
-            922, 992, 1136, 1218, 1219, 1220, 1475, 1476, 1970, 2268, 2373, 2420, 2422, 2423,
-            2591, 2756, 2758, 3005, 3007, 3119, 3120, 3121, 3332
-        ] # a little bit of magic numbers :) # TODO: automate the finding of corrupt images during initialization
-        df.drop(idxs_to_drop, inplace=True)
-        self.metadata = self._extract_fitzpatrick_skin_type(df)
+
+        # --- NEW: Automate corrupt image finding (replaces idxs_to_drop) ---
+        print("Verifying dataset images...")
+        valid_indices = []
+        for idx, row in tqdm(df.iterrows(), total=len(df), desc="Checking images"):
+            img_path = self.images / row["midas_file_name"]
+            # Try to read the image
+            img = cv2.imread(str(img_path))
+            if img is not None:
+                # If it's not None, the image is valid
+                valid_indices.append(idx)
+
+        # Filter the dataframe to keep only rows with valid images
+        self.metadata = df.loc[valid_indices].reset_index(drop=True)
+        print(f"Found {len(self.metadata)} valid images out of {len(df)} total.")
+        # --- END OF NEW SECTION ---
+
+        self.metadata = self._extract_fitzpatrick_skin_type(self.metadata)
         unique_labels = sorted(self.metadata['midas_path'].astype(str).unique())
         self.class_to_idx = {label: i for i, label in enumerate(unique_labels)}
-        self.idx_to_class = {k:v for v, k in self.class_to_idx.items()}
+        self.idx_to_class = {v: k for k, v in self.class_to_idx.items()}
 
+    # ... (the rest of your __init__ and other methods like get_info, _extract_fitzpatrick_skin_type remain the same) ...
     @classmethod
     def get_info(cls):
         from src.dataloaders.dataset_registry import INFO
@@ -81,6 +94,7 @@ class MRAMIDAS(torch.utils.data.Dataset):
             "race": row["midas_race"],
             "location": row["midas_location"],
             "melanoma": row["midas_melanoma"],
+            "img_path": str(img_path)
         }
 
         return img, label

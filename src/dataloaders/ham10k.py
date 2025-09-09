@@ -56,6 +56,7 @@ class HAM10K(torch.utils.data.Dataset):
             "age": row["age"],
             "sex": row["sex"],
             "location": row["localization"],
+            "img_path": str(img_path)
         }
 
         return img, label

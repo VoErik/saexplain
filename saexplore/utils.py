@@ -4,7 +4,7 @@ import json
 import torch
 import umap
 from PIL import Image, ImageDraw, ImageEnhance
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Tuple
 
 from matplotlib import cm
 
@@ -47,11 +47,13 @@ def create_dimmed_mask_image(
         img_path: str,
         active_indices: List[int],
         feat_extractor_info: Dict,
-        dim_factor: float = 0.7
+        dim_factor: float = 0.7,
+        img_size: tuple[int, int] = (224,224)
 ):
     """Masks out non-active patches by dimming them."""
     try:
         original_image = Image.open(img_path).convert("RGB")
+        original_image = original_image.resize(size=img_size)
     except FileNotFoundError:
         return None
     img_width, img_height = original_image.size
@@ -78,11 +80,13 @@ def create_dimmed_mask_image(
 def create_binary_mask_image(
         img_path: str,
         active_indices: List[int],
-        feat_extractor_info: Dict
+        feat_extractor_info: Dict,
+        img_size: tuple[int, int] = (224,224)
 ):
     """Shows only the active patches on a black background."""
     try:
         original_image = Image.open(img_path).convert("RGB")
+        original_image = original_image.resize(size=img_size)
     except FileNotFoundError:
         return None
 
@@ -108,11 +112,13 @@ def create_binary_mask_image(
 def create_heatmap_image(
         img_path: str,
         active_patches: List,
-        feat_extractor_info: Dict
+        feat_extractor_info: Dict,
+        img_size: tuple[int, int] = (224,224)
 ):
     """Overlays a heatmap on the image based on patch activation strength."""
     try:
         original_image = Image.open(img_path).convert("RGB")
+        original_image = original_image.resize(size=img_size)
     except FileNotFoundError:
         return None
 

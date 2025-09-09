@@ -12,7 +12,7 @@ RESULTS_DEST_DIR="${DATA_PREFIX}results"
 # --- Internal Variables ---
 COPIED_ARCHIVES=()
 SOURCE_FILENAMES=()
-GPU_DEVICE=0
+GPU_DEVICE=1
 TASK_SCRIPT=""
 CONFIG_FILE=""
 EXTRA_ARGS=()
@@ -98,7 +98,7 @@ if [ -z "$TASK_SCRIPT" ]; then
     exit 1
 fi
 
-export CUDA_VISIBLE_DEVICES="$GPU_DEVICE"
+export CUDA_VISIBLE_DEVICES=$GPU_DEVICE
 
 ## --- Dataset Preparation (Optional) ---
 if [ ${#SOURCE_FILENAMES[@]} -gt 0 ]; then

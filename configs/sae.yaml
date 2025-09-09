@@ -23,7 +23,7 @@ sae:
   l1_coefficient: 0.00008
   initial_l1_coefficient: 0.0001
   l1_warm_up_steps: 1000
-  embedding_source_name: "fitzpatrick17k"
+  embedding_source_name: "mra_midas"
   eval_batch_size: 32
   eval_interval_steps: 1000
   eval_n_batches: 50
@@ -36,8 +36,8 @@ sae:
   checkpoint_path: "./checkpoints/"
 
 activation_store:
-  dataset_name: "fitzpatrick17k"
-  eval_dataset_name: "skincon_fitzpatrick17k"
+  dataset_name: "mra-midas"
+  eval_dataset_name: "mra-midas"
   dataset_path: "./data/"
   embedding_cache_path: "./embeddings"
   extraction_batch_size: 64

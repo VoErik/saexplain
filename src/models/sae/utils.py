@@ -32,6 +32,8 @@ SAE_MAP = {
     "standard": StandardSAE,
     "topk": TopKSAE,
     "gated": GatedSAE,
+    "batchtopk": TopKSAE,
+    "jumprelu": StandardSAE
 }
 
 ###################################################################################
@@ -129,45 +131,60 @@ def load_configs_from_yaml(yaml_path: str) -> Dict[str, dict]:
     }
 
 
-def compute_geometric_median(points: torch.Tensor, max_iter: int = 100, tol: float = 1e-5) -> torch.Tensor:
+def compute_geometric_median(
+        activation_store: VisionActivationStore,
+        max_iter: int = 100,
+        tol: float = 1e-5,
+        device: str = "cpu"
+) -> torch.Tensor:
     """
-    Computes the geometric median of a set of points using Weiszfeld's algorithm.
+    Computes the geometric median of a dataset in a memory-efficient way using batch processing.
     """
-    median = torch.mean(points, dim=0)
-    for _ in range(max_iter):
+    first_batch = next(iter(activation_store)).to(device)
+    median = torch.mean(first_batch.reshape(-1, activation_store.d_in), dim=0)
+
+    for i in range(max_iter):
         prev_median = median.clone()
-        distances = torch.norm(points - median, dim=1)
+        numerator = torch.zeros_like(median)
+        denominator = 0.0
 
-        # Avoid division by zero for points that are at the current median
-        inv_distances = 1.0 / distances
-        inv_distances[distances == 0] = 0
+        for batch in tqdm(activation_store, desc=f"GM Iter {i+1}/{max_iter}"):
+            points = batch.reshape(-1, activation_store.d_in).to(device)
+            distances = torch.norm(points - median, dim=1)
 
-        weights = inv_distances / torch.sum(inv_distances)
-        median = torch.sum(points * weights.unsqueeze(1), dim=0)
+            inv_distances = 1.0 / (distances + 1e-10) # Add epsilon for stability
+
+            numerator += torch.sum(points * inv_distances.unsqueeze(1), dim=0)
+            denominator += torch.sum(inv_distances)
+
+        median = numerator / denominator
 
         if torch.norm(median - prev_median) < tol:
+            print(f"Geometric median converged after {i+1} iterations.")
             break
 
-    return median
+    return median.to("cpu")
 
 def get_data_center(
         activation_store: VisionActivationStore,
-        method: Literal["zeros", "mean", "geometric_median"]
+        method: Literal["mean", "geometric_median"],
+        device: str = "cpu"
 ) -> torch.Tensor:
     """
-    Computes the center of the dataset in the activation store.
+    Computes the center of the dataset in the activation store in a memory-efficient way.
     """
-    print(f"Computing data center using method: {method}")
-
-    # Concatenate all patches into a single tensor
-    all_patches = torch.cat(
-        [batch.reshape(-1, activation_store.d_in) for batch in tqdm(activation_store, desc="Loading data for centering")],
-        dim=0
-    )
+    print(f"Computing data center using method: {method} on device: {device}")
 
     if method == "mean":
-        return torch.mean(all_patches, dim=0)
+        sum_of_activations = torch.zeros(activation_store.d_in, device=device)
+        total_activations = 0
+        for batch in tqdm(activation_store, desc="Calculating Mean"):
+            points = batch.reshape(-1, activation_store.d_in).to(device)
+            sum_of_activations += torch.sum(points, dim=0)
+            total_activations += points.shape[0]
+        return (sum_of_activations / total_activations).to("cpu")
+
     elif method == "geometric_median":
-        return compute_geometric_median(all_patches)
+        return compute_geometric_median(activation_store, device=device)
     else:
         raise ValueError(f"Unknown data centering method: {method}")

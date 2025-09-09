@@ -194,7 +194,7 @@ def plot_top_k_images(
 
 def plot_activation_histogram(atlas_path: str, savedir: str = "plots"):
     """
-    Visualizes the importance (mean top-k activation) of all features.
+    Visualizes the importance of all features.
     """
     f = np.load(atlas_path, allow_pickle=True)
     atlas = {int(k): v.tolist() for k, v in f.items()}
@@ -205,13 +205,13 @@ def plot_activation_histogram(atlas_path: str, savedir: str = "plots"):
         mean_score = sum(item["score"] for item in top_items) / len(top_items)
         dim_importances[dim_idx] = mean_score
 
-    sorted_scores = sorted(dim_importances.values(), reverse=True)
+    scores = dim_importances.values()
 
     plt.figure(figsize=(12, 6))
-    xs = np.arange(len(sorted_scores))
-    plt.bar(xs, sorted_scores, color='skyblue', label="Feature Importance")
+    xs = np.arange(len(scores))
+    plt.bar(xs, scores, color='skyblue', label="Feature Importance")
     plt.xlabel('Features (sorted by importance)')
-    plt.ylabel('Mean Activation of Top-K Samples')
+    plt.ylabel('Mean Activation')
     plt.title('Feature Importance Distribution')
     plt.legend()
     plt.savefig(f'{savedir}/sae_feature_importance.png', dpi=300)

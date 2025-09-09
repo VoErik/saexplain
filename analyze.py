@@ -79,12 +79,13 @@ def run_analysis(
 
 
 if __name__ == "__main__":
-    sae_path = "analysis/sae_model"
+    sae_name = "sae_mra_midas_standard_d_in_1024_d_sae_16384_act_relu_l1_8e-05"
+    sae_path = f"analysis/{sae_name}"
     device = "cuda"
     extractor = "dinov3_vitl16"
     extractor_path = "../dinov3"
-    output_path = "./analysis"
-    dataset = "skincon_fitzpatrick17k"
+    output_path = f"./analysis/{sae_name}"
+    dataset = "mra-midas"
 
     run_analysis(
         path=sae_path,

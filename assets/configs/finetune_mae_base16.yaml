@@ -1,0 +1,23 @@
+mode: backbone
+backbone_type: mae
+model_name_or_path: google/vit-base-patch16-224-in21k
+output_dir: ./ckpts/mae
+dataset_name: 
+  - fitzpatrick
+  - ham
+  - scin
+  - midas
+data_root: "../../data"
+batch_size: 64
+num_epochs: 100
+learning_rate: 0.00015
+lr_scheduler_type: cosine
+num_workers: 8
+seed: 42
+wandb_project: mae_finetune
+validation_interval: 1
+save_best_model: true
+gradient_accumulation_steps: 4
+use_amp: true
+weight_decay: 0.05
+freeze_layers_up_to: null

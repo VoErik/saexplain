@@ -2,8 +2,8 @@ import contextlib
 import itertools
 import math
 
-from dataclasses import dataclass, field, fields
-from typing import Any
+from dataclasses import dataclass, field, fields, asdict
+from typing import Any, Literal
 from pathlib import Path
 
 import torch
@@ -21,10 +21,13 @@ from src.sae.embedding_cache import EmbeddingCache
 from src.sae.base import (
     TrainCoefficientConfig,
     TrainStepInput,
-    TrainStepOutput
+    TrainStepOutput,
+    TrainingSAE,
+    TrainingSAEConfig
 )
 
-from src.utils.sae import SAE_SPARSITY_FILENAME
+from src.utils.sae import SAE_SPARSITY_FILENAME, filter_valid_dataclass_fields
+
 
 @dataclass
 class LoggingConfig:
@@ -39,6 +42,12 @@ class LoggingConfig:
     wandb_entity: str | None = None
     wandb_log_frequency: int = 10
     eval_every_n_wandb_logs: int = 100  # logs every 100 steps.
+
+    @classmethod
+    def from_dict(cls, config_dict: dict[str, Any]):
+        filtered_config_dict = filter_valid_dataclass_fields(config_dict, cls)
+        res = cls(**filtered_config_dict)
+        return res
 
     def log(
         self,
@@ -103,6 +112,12 @@ class SAETrainerConfig:
     
     def to_dict(self) -> dict[str, Any]:
         res = {field.name: getattr(self, field.name) for field in fields(self)}
+        return res
+    
+    @classmethod
+    def from_dict(cls, config_dict: dict[str, Any]):
+        filtered_config_dict = filter_valid_dataclass_fields(config_dict, cls)
+        res = cls(**filtered_config_dict)
         return res
 
 
@@ -393,14 +408,6 @@ class SAETrainer:
         return train_step_output
 
     def fit(self):
-        if self.cfg.logger.log_to_wandb:
-            wandb.init(
-                project=self.cfg.logger.wandb_project,
-                entity=self.cfg.logger.wandb_entity,
-                config=self.cfg.to_dict(),
-                name=self.cfg.logger.run_name,
-                id=self.cfg.logger.wandb_id,
-            )
 
         self.sae.to(self.cfg.device)
         pbar = tqdm(total=self.cfg.total_training_samples, desc="Training SAE")
@@ -483,7 +490,135 @@ class SAETrainer:
         
         print(f"Saved best model and artifacts to {save_dir}")
 
-        if self.cfg.logger.log_to_wandb:
-            wandb.finish()
+        
 
         return self.sae
+
+@dataclass
+class TrainingRunnerConfig:
+    # TRAINER CONFIG PARAMS
+    total_training_samples: int = 100_000
+    device: str = "cuda"
+    autocast: bool = True
+    lr: float = 5e-5
+    lr_end: float | None = 5e-6
+    lr_scheduler_name: str = "constant"
+    lr_warm_up_steps: int = 1000
+    adam_beta1: float = 0.9
+    adam_beta2: float = 0.999
+    lr_decay_steps: int = 0
+    n_restart_cycles: int = 1
+    train_batch_size_samples: int = 256
+    dead_feature_window: int = 1000
+    feature_sampling_window: int = 2000
+    logger: LoggingConfig = field(default_factory=LoggingConfig)
+    eval_metric_mode: str = "min"
+    eval_metric_to_track: str = "losses/eval_loss"
+    model_save_path: str = "./ckpts/sae/"
+
+    # EMBEDDING CACHE CONFIG PARAMS
+    datasets: list[str] = field(default_factory=lambda: ["fitzpatrick"])
+    data_root: str = "../data"
+    model_path: str = "../ckpts/clip/openai-clip-vit-base-patch16-['ham', 'fitzpatrick', 'scin', 'midas']-best_model"
+    cache_dir: str = "../cache"
+    cls_only: bool = False
+    extraction_batch_size: int = 64
+    layer_index: int = -1
+
+    # EVALUATOR CONFIG PARAMS
+
+    # SAE CONFIG PARAMS
+    ## Basic configuration
+    d_in: int = 768
+    d_sae: int = 1536
+    device: str = "cuda"
+    dtype: str = "float32"
+    apply_b_dec_to_input: bool = True
+    decoder_init_norm: float | None = 0.1
+    normalize_activations: str = "expected_average_only_in"
+    architecture: str = "jumprelu"
+
+    ## relu
+    l1_coefficient: float = 3.0
+    lp_norm: float = 1.0
+    l1_warm_up_steps: int = 0
+
+    ## topk
+    k: int = 20
+    rescale_acts_by_decoder_norm: bool = False
+    aux_loss_coefficient: float = 1.0
+
+    ## batchtopk
+    topk_threshold_lr: float = 0.01
+
+    ## matryoshka
+    matryoshka_widths: list[int] = field(default_factory=list)
+
+    ## jumprelu
+    jumprelu_init_threshold: float = 0.01
+    jumprelu_bandwidth: float = 0.05
+    jumprelu_sparsity_loss_mode: Literal["step", "tanh"] = "step"
+    l0_coefficient: float = 1.0
+    l0_warm_up_steps: int = 0
+    pre_act_loss_coefficient: float | None = None
+    jumprelu_tanh_scale: float = 4.0
+
+    # LOGGING CONFIG PARAMS
+    log_to_wandb: bool = True
+    log_model_artifacts_to_wandb: bool = False
+    log_activations_store_to_wandb: bool = False
+    log_optimizer_state_to_wandb: bool = False
+    wandb_project: str = "sae_training"
+    wandb_id: str | None = None
+    run_name: str | None = None
+    wandb_entity: str | None = None
+    wandb_log_frequency: int = 10
+    eval_every_n_wandb_logs: int = 100  # logs every 100 steps.
+
+    def to_dict(self):
+        return asdict(self)
+    
+    @classmethod
+    def from_dict(cls, config_dict: dict[str, Any]):
+        filtered_config_dict = filter_valid_dataclass_fields(config_dict, cls)
+        res = cls(**filtered_config_dict)
+        return res
+    
+
+def train_sae(cfg_dict: dict):
+    cfg = TrainingRunnerConfig.from_dict(cfg_dict)
+    
+    if cfg.log_to_wandb:
+            wandb.init(
+                project=cfg.wandb_project,
+                entity=cfg.wandb_entity,
+                config=cfg.to_dict(),
+                name=cfg.run_name,
+                id=cfg.wandb_id,
+            )
+    sae = TrainingSAE.from_dict(
+        TrainingSAEConfig.from_dict(
+            cfg.to_dict()
+        ).to_dict()
+    )
+    cache = EmbeddingCache.from_dict(
+        cfg.to_dict()
+    )
+    evaluator = None
+
+    trainer_cfg = SAETrainerConfig.from_dict(
+        cfg.to_dict()
+    )
+    trainer_cfg.logger = LoggingConfig.from_dict(cfg_dict)
+    trainer = SAETrainer(
+        cfg=trainer_cfg,
+        sae=sae,
+        data_provider=cache,
+        evaluator=evaluator
+    )
+
+    _ = trainer.fit()
+
+    if cfg.log_to_wandb:
+        wandb.finish()
+

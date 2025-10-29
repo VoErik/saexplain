@@ -68,13 +68,15 @@ class CLIP(torch.nn.Module):
             )
             all_hidden_states = vision_outputs.hidden_states
             target_hidden_state = all_hidden_states[layer_index]
+
             
             cls_embedding = target_hidden_state[:, 0, :] # CLS token is the first token
+            final_cls_embedding = all_hidden_states[-1][:, 0, :]
             
             if return_patch_embeddings:
-                return target_hidden_state[:, :, :]
+                return target_hidden_state[:, :, :], all_hidden_states[-1][:, :, :]
             else:
-                return cls_embedding
+                return cls_embedding, final_cls_embedding
         else:
             return self.model(
                 input_ids=input_ids,

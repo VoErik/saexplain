@@ -4,10 +4,12 @@ from safetensors.torch import save_file, load_file
 from pathlib import Path
 from tqdm import tqdm
 import gc
-from typing import List
+from typing import List, Any
+from dataclasses import dataclass, field, fields
 
 
 from src.utils.load_backbone import load_backbone
+from src.utils.sae import filter_valid_dataclass_fields
 from src.data import get_dataloaders
 
 
@@ -47,7 +49,26 @@ class _CachedDataset(Dataset):
             
             return self.embeddings[sample_idx, token_idx, :]
 
-# --- Main Class ---
+@dataclass
+class CacheConfig:
+    datasets: list[str] = field(default_factory=list)
+    data_root: str = "../data"
+    model_path: str = "openai/clip-vit-base-patch32"
+    cache_dir: str = "./cache"
+    cls_only: bool = False
+    extraction_batch_size: int = 64
+    layer_index: int = -1
+
+    @classmethod
+    def from_dict(cls, config_dict: dict[str, Any]):
+        filtered_config_dict = filter_valid_dataclass_fields(config_dict, cls)
+        res = cls(**filtered_config_dict)
+        return res
+    
+
+    def to_dict(self) -> dict[str, Any]:
+        res = {field.name: getattr(self, field.name) for field in fields(self)}
+        return res
 
 class EmbeddingCache:
     """
@@ -62,21 +83,15 @@ class EmbeddingCache:
     """
     def __init__(
             self,
-            datasets: str | List,
-            data_root: str = "../data",
-            model_path: str = "clip",
-            save_dir: str | Path = "./cache",
-            cls_only: bool = False,
-            extraction_batch_size: int = 64,
-            layer_index: int = -1
+            cfg: CacheConfig
     ):
-        self.datasets = datasets
-        self.data_root = data_root
-        self.model_path = model_path
-        self.save_dir = Path(save_dir)
-        self.cls_only = cls_only
-        self.extraction_batch_size = extraction_batch_size
-        self.layer_index = layer_index
+        self.datasets = cfg.datasets
+        self.data_root = cfg.data_root
+        self.model_path = cfg.model_path
+        self.save_dir = Path(cfg.cache_dir)
+        self.cls_only = cfg.cls_only
+        self.extraction_batch_size = cfg.extraction_batch_size
+        self.layer_index = cfg.layer_index
 
         datasets_str = "-".join(self.datasets) if isinstance(self.datasets, list) else self.datasets
         model_name = Path(self.model_path).name 
@@ -173,3 +188,9 @@ class EmbeddingCache:
         
         print(f"Loaded train embeddings with shape: {self.train_embeddings.shape}")
         print(f"Loaded eval embeddings with shape: {self.eval_embeddings.shape}")
+
+    @classmethod
+    def from_dict(cls, config_dict: dict[str, Any]):
+        cache_cfg = CacheConfig.from_dict(config_dict=config_dict)
+        res = cls(cache_cfg)
+        return res

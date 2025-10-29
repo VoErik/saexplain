@@ -1,4 +1,7 @@
 import argparse
+import wandb
+
+from src.utils.load_config import load_config, merge_configs
 
 parser = argparse.ArgumentParser(
     description="Provide necessary config files for either running training, inference or interpretability research."
@@ -16,13 +19,31 @@ parser.add_argument(
     required=True, 
     help="Path to the config file."
     )
+parser.add_argument(
+    '--sweep', 
+    type=str, 
+    default="assets/configs/sweep.yaml",
+    help="Path to the sweep definition YAML file."
+    )
+parser.add_argument(
+    "--do_sweep",
+    action="store_true",
+    help="Whether to run a wandb sweep."
+)
+parser.add_argument(
+    "--sweep_count",
+    type=int,
+    default=20,
+    help="How many sweep runs to run."
+)
 
 ARGS = parser.parse_args()
+
 
 def main():
     if ARGS.mode == "train":
         from src.train import run_training
-        run_training(ARGS.config)
+        run_training(ARGS)
     elif ARGS.mode == "inference":
         from src.inference import run_inference
         run_inference(ARGS.config)

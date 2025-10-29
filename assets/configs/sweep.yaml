@@ -1,0 +1,60 @@
+program: main.py
+method: random
+metric:
+  name: losses/mse_loss
+  goal: minimize
+
+parameters:
+  d_in:
+    value: 768
+  architecture:
+    value: "relu"
+  total_training_samples:
+    value: 200_000_000
+  autocast:
+    value: true
+
+  d_sae:
+    # d_in * [2, 4, 8, 16]
+    values: [1536, 3072, 6144, 12288]
+  
+  l1_coefficient:
+    distribution: log_uniform_values
+    min: 1.0
+    max: 20.0
+    
+  l1_warm_up_steps:
+    values: [1000, 5000, 10000]
+
+  lr:
+    values: [1e-4, 3e-4, 5e-4]
+    
+  lr_scheduler_name:
+    values: ["constant", "cosineannealing", "cosineannealingwarmrestarts"]
+
+  lr_warm_up_steps:
+    values: [1000, 5000]
+    
+  train_batch_size_samples:
+    values: [2048, 4096]
+
+  dead_feature_window:
+    values: [2000, 5000]
+
+  datasets:
+    value: ["fitzpatrick", "ham", "midas", "scin"]
+  data_root:
+    value: "../../data"
+  model_path:
+    value: "./ckpts/clip/openai-clip-vit-base-patch16-['ham', 'fitzpatrick', 'scin', 'midas']-best_model"
+  cache_dir:
+    value: "./cache"
+  cls_only:
+    value: false
+  layer_index:
+    value: -1
+    
+  log_to_wandb:
+    value: true
+  wandb_project:
+    value: "sae_clip_patches_sweep" # Set your sweep project name

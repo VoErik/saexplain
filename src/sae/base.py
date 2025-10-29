@@ -9,7 +9,7 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields, asdict
-from typing import NamedTuple, Any, TypeVar, Generic, Literal
+from typing import NamedTuple, Any, TypeVar, Generic, Literal, Callable
 from typing_extensions import override
 
 import einops
@@ -129,7 +129,6 @@ class TrainStepOutput:
     hidden_pre: torch.Tensor
     loss: torch.Tensor  # we need to call backwards on this
     losses: dict[str, torch.Tensor]
-    # any extra metrics to log can be added here
     metrics: dict[str, torch.Tensor | float | int] = field(default_factory=dict)
 
 class TrainCoefficientConfig(NamedTuple):
@@ -170,7 +169,7 @@ class SAE(nn.Module, ABC, Generic[T]):
         self.W_enc = nn.Parameter(w_enc_data)
 
     
-    def get_activation_fn(self):
+    def get_activation_fn(self) -> Callable[[torch.Tensor], torch.Tensor]:
         return nn.ReLU()
     
     @torch.no_grad()
@@ -264,7 +263,7 @@ class SAE(nn.Module, ABC, Generic[T]):
     
     def get_name(self):
         """Generate a name for this SAE."""
-        return f"sae_{self.cfg.architecture}_d{self.cfg.d_sae}"
+        return f"sae_{self.cfg.architecture()}_d{self.cfg.d_sae}"
 
     def save(self, path: str | Path) -> tuple[Path, Path]:
         """Save model weights and config to disk."""
@@ -305,7 +304,7 @@ class SAE(nn.Module, ABC, Generic[T]):
         sae_cls = cls.get_sae_class_for_architecture(sae_cfg.architecture())
         sae = sae_cls(sae_cfg)
 
-        weights_path = config_path / SAE_WEIGHTS_FILENAME
+        weights_path = dir_path / SAE_WEIGHTS_FILENAME
         state_dict = load_file(weights_path, device="cpu")
         sae.process_state_dict_for_loading(state_dict)
         sae.load_state_dict(state_dict)

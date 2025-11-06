@@ -10,8 +10,11 @@ def train_backbone(cfg):
     
     backbone_type = cfg.get("backbone_type", "clip")
     if backbone_type == "clip":
-        from src.backbones.clip import train_clip
-        train_clip(cfg)
+        from src.backbones.clip import train_clip, run_training_classification
+        if cfg.get("mode", None) == "backbone":
+            train_clip(cfg)
+        else:
+            run_training_classification(cfg, num_classes=200)
     elif backbone_type == "mae":
         from src.backbones.mae import train_mae
         train_mae(cfg)

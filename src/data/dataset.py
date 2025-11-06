@@ -11,6 +11,7 @@ from typing import Literal, List
 
 import torch
 
+# TODO: make general
 class DermDataset(torch.utils.data.Dataset):
     
     def __init__(self, dataframe, transform=None, labelkey='label'):
@@ -42,7 +43,7 @@ class DermDataset(torch.utils.data.Dataset):
             elif transform_class_name == "LinearProbeTransform":
                 return self.transform(img, sample_data)
             else:
-                return self.transform(img, label)
+                return self.transform(img), label
         else:
             return img, label
 
@@ -78,8 +79,6 @@ def get_combined_dataset(
     combined_df = pd.concat(dfs)
     return combined_df
 
-
-
 def setup_fitzpatrick(root: str) -> pd.DataFrame:
     from src.backbones import generate_prompts_for_clip
     images_dir = Path(root) / "images"
@@ -90,7 +89,6 @@ def setup_fitzpatrick(root: str) -> pd.DataFrame:
     df["source_dataset"] = "fitzpatrick17k"
     df.drop(columns=["md5hash"], inplace=True)
     return df
-
 
 def setup_ham10000(root: str) -> pd.DataFrame:
     from src.backbones import generate_prompts_for_clip
@@ -253,7 +251,6 @@ def setup_scin(root: str) -> pd.DataFrame:
     df_final.drop(columns=IGNORE_COLS, inplace=True)
 
     return df_final
-
 
 def setup_midas(root: str) -> pd.DataFrame:
     """

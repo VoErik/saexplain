@@ -8,7 +8,7 @@ from jaxtyping import Float
 from torch import nn
 from typing_extensions import override
 
-from src.sae.base import (
+from sae.core import (
     SAE,
     SAEConfig,
     TrainCoefficientConfig,

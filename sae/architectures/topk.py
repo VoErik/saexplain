@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from jaxtyping import Float
 
-from src.sae.base import (
+from sae.core import (
     SAE,
     TrainingSAE,
     SAEConfig,

@@ -6,18 +6,30 @@ metric:
 
 parameters:
   architecture:
-    value: "topk"
+    value: "jumprelu"
 
-  k:
-    values: [10, 20, 40, 80, 160]
-  
-  rescale_acts_by_decoder_norm:
-    values: [true, false]
+  jumprelu_init_threshold:
+    values: [0.001, 0.01, 0.1]
     
-  aux_loss_coefficient:
+  jumprelu_bandwidth:
+    values: [0.01, 0.05, 0.1]
+    
+  l0_coefficient:
     distribution: log_uniform_values
-    min: 0.1
-    max: 10.0
+    min: 1.0
+    max: 20.0
+    
+  l0_warm_up_steps:
+    values: [0, 1000, 5000, 10000]
+    
+  jumprelu_tanh_scale:
+    values: [2.0, 4.0, 8.0]
+
+  jumprelu_sparsity_loss_mode:
+    value: "step"
+            
+  pre_act_loss_coefficient:
+    value: null
 
   d_sae:
     values: [1536, 3072, 6144, 9216, 12288]

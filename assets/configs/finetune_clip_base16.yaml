@@ -1,15 +1,11 @@
-mode: backbone
+mode: backbone-classify
 backbone_type: clip
 model_name_or_path: openai/clip-vit-base-patch16 # openai/clip-vit-large-patch14 openai/clip-vit-base-patch16
 output_dir: ./ckpts/clip
-dataset_name: 
-  - ham
-  - fitzpatrick
-  - scin
-  - midas
+dataset_name: "cub"
 data_root: "../../data"
-batch_size: 128
-num_epochs: 10
+batch_size: 256
+num_epochs: 100
 learning_rate: 0.00003
 lr_scheduler_type: cosine
 num_workers: 4
@@ -20,4 +16,4 @@ save_best_model: true
 gradient_accumulation_steps: 2
 use_amp: true
 weight_decay: 0.01
-freeze_layers_up_to: null
+freeze_layers_up_to: 10

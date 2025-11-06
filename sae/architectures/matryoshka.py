@@ -6,11 +6,11 @@ import torch
 from jaxtyping import Float
 from typing_extensions import override
 
-from src.sae.batchtopk import (
+from sae.architectures.batchtopk import (
     BatchTopKTrainingSAE,
     BatchTopKSAETrainingConfig,
 )
-from src.sae.base import TrainStepInput, TrainStepOutput
+from sae.core import TrainStepInput, TrainStepOutput
 
 
 @dataclass

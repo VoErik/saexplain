@@ -1,7 +1,4 @@
 import argparse
-import wandb
-
-from src.utils.load_config import load_config, merge_configs
 
 parser = argparse.ArgumentParser(
     description="Provide necessary config files for either running training, inference or interpretability research."
@@ -33,7 +30,7 @@ parser.add_argument(
 parser.add_argument(
     "--sweep_count",
     type=int,
-    default=20,
+    default=50,
     help="How many sweep runs to run."
 )
 

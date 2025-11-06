@@ -10,8 +10,8 @@ from torch.optim import AdamW
 from transformers import CLIPModel, CLIPProcessor, get_scheduler
 from src.data import get_dataloaders
 import pandas as pd
-import numpy as np
 import random
+import torch.nn as nn
 
 class CLIP(torch.nn.Module):
     """
@@ -21,7 +21,7 @@ class CLIP(torch.nn.Module):
     def __init__(self, model_name_or_path: str):
         super().__init__()
         self.model = CLIPModel.from_pretrained(model_name_or_path)
-        self.processor = CLIPProcessor.from_pretrained(model_name_or_path)
+        self.processor = CLIPProcessor.from_pretrained(model_name_or_path) # use original img processor
         self.num_layers = self.model.vision_model.config.num_hidden_layers
 
     def forward(
@@ -84,18 +84,56 @@ class CLIP(torch.nn.Module):
                 pixel_values=pixel_values,
                 return_loss=True
             )
+
+class CLIPForClassification(nn.Module):
+    """
+    A classification model that uses the CLIP vision encoder as a backbone.
+    """
+    def __init__(self, model_name_or_path: str, num_classes: int, layer_index: int = -1):
+        """
+        Args:
+            model_name_or_path (str): Path to the pretrained CLIP model.
+            num_classes (int): The number of output classes (e.g., 200 for CUB).
+            layer_index (int): Which hidden state layer to use for the CLS token.
+                               -1 (default) uses the final hidden state.
+                               0 uses the initial embedding.
+                               1 to N uses the Nth transformer layer output.
+        """
+        super().__init__()
+        self.num_classes = num_classes
+        self.layer_index = layer_index
         
+        self.clip = CLIP(model_name_or_path)
+        
+        embed_dim = self.clip.model.vision_model.config.hidden_size
+        
+        self.classification_head = nn.Linear(embed_dim, num_classes)
+
+    def forward(self, pixel_values: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass for classification.
+        """
+        
+        cls_embedding, _ = self.clip(
+            pixel_values=pixel_values,
+            layer_index=self.layer_index 
+        )
+        
+        logits = self.classification_head(cls_embedding)
+        
+        return logits
+
 @dataclass
 class CLIPTrainingConfig:
     # Data and Model Config
-    dataset_name: str = "fitzpatrick"
+    dataset_name: str = "cub"
     data_root: str = "../../data"
-    model_name_or_path: str = "openai/clip-vit-base-patch32"
+    model_name_or_path: str = "openai/clip-vit-base-patch16"
     output_dir: str = "./ckpts/clip"
     freeze_layers_up_to: Optional[int] = None 
 
     # Training HPs
-    num_epochs: int = 5
+    num_epochs: int = 10
     batch_size: int = 32
     learning_rate: float = 1e-5
     lr_scheduler_type: str = "cosine"
@@ -126,7 +164,7 @@ def train_clip(config: dict):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = CLIP(cfg.model_name_or_path).to(device)
     
-    transform = CLIPTransform(model.processor)
+    transform = CLIPTransform(model.processor, is_train=True)
     train_loader, val_loader = get_dataloaders(
         datasets=cfg.dataset_name,
         data_root=cfg.data_root, 
@@ -227,9 +265,10 @@ class CLIPTransform:
     A transform "adapter" for the CLIP model.
     It applies custom image augmentations and processes both image and text.
     """
-    def __init__(self, processor):
+    def __init__(self, processor, is_train):
         self.processor = processor
-        
+        self.is_train = is_train
+
         CROP_SIZE = self.processor.image_processor.crop_size['height']
         NORM_MEAN = self.processor.image_processor.image_mean
         NORM_STD = self.processor.image_processor.image_std
@@ -242,17 +281,28 @@ class CLIPTransform:
             transforms.Normalize(mean=NORM_MEAN, std=NORM_STD)
         ])
 
-    def __call__(self, raw_image: Image.Image, raw_prompts_list: list[str]):
-        processed_image = self.image_transform(raw_image)
-        selected_prompt = random.choice(raw_prompts_list)
+    def __call__(self, raw_image: Image.Image, raw_prompts_list: list[str] | None = None):
+        if self.is_train:
+            processed_image = self.image_transform(raw_image)
+            selected_prompt = random.choice(raw_prompts_list)
         
-        processed_text = self.processor(
-            text=selected_prompt,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=77
-        )
+            processed_text = self.processor(
+                text=selected_prompt,
+                return_tensors="pt",
+                padding="max_length",
+                truncation=True,
+                max_length=77
+            )
+        else:
+            out = self.processor(
+                images=raw_image,
+                return_tensors="pt",
+                padding="True")
+            
+            processed_image = out["pixel_values"].squeeze(0)
+
+            return {"pixel_values": processed_image}
+        
         
         return {
             "pixel_values": processed_image,
@@ -260,6 +310,213 @@ class CLIPTransform:
             "attention_mask": processed_text['attention_mask'].squeeze(0) # Remove batch dim
         }
 
+def train_one_epoch(
+    model: CLIPForClassification,
+    dataloader: torch.utils.data.DataLoader,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
+    criterion: nn.Module,
+    scaler: torch.amp.GradScaler,
+    device: torch.device,
+    use_amp: bool,
+    gradient_accumulation_steps: int
+):
+    model.train()
+    total_loss = 0.0
+    
+    for i, (images, labels) in enumerate(tqdm(dataloader, desc="Training")):
+        # --- Adapt this to your dataset ---
+        # Assuming batch is a dict with 'pixel_values' and 'labels'
+        pixel_values = images["pixel_values"].to(device)
+        labels = labels.to(device)
+        # ------------------------------------
+
+        with torch.amp.autocast(device_type="cuda", enabled=use_amp):
+            logits = model(pixel_values=pixel_values)
+            loss = criterion(logits, labels)
+            
+            if gradient_accumulation_steps > 1:
+                loss = loss / gradient_accumulation_steps
+
+        scaler.scale(loss).backward()
+
+        if (i + 1) % gradient_accumulation_steps == 0 or (i + 1) == len(dataloader):
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+            scheduler.step()
+
+        total_loss += loss.item() * (gradient_accumulation_steps if gradient_accumulation_steps > 1 else 1)
+        
+    avg_loss = total_loss / len(dataloader)
+    return avg_loss
+
+def evaluate(
+    model: CLIPForClassification,
+    dataloader: torch.utils.data.DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+    use_amp: bool
+):
+    model.eval()
+    total_loss = 0.0
+    all_preds = []
+    all_labels = []
+
+    with torch.no_grad():
+        for images, labels in tqdm(dataloader, desc="Evaluating"):
+            pixel_values = images["pixel_values"].to(device)
+            labels = labels.to(device)
+            # ------------------------------------
+
+            with torch.amp.autocast(device_type="cuda", enabled=use_amp):
+                logits = model(pixel_values=pixel_values)
+                loss = criterion(logits, labels)
+
+            total_loss += loss.item()
+            
+            preds = torch.argmax(logits, dim=1)
+            all_preds.append(preds.cpu())
+            all_labels.append(labels.cpu())
+
+    avg_loss = total_loss / len(dataloader)
+    
+    all_preds = torch.cat(all_preds)
+    all_labels = torch.cat(all_labels)
+    
+    accuracy = (all_preds == all_labels).float().mean().item()
+    
+    return avg_loss, accuracy
+
+def freeze_clip_layers(model: CLIPForClassification, freeze_layers_up_to: int):
+    """
+    Freezes the CLIP vision backbone according to the config.
+    """
+    if freeze_layers_up_to is None or freeze_layers_up_to < 0:
+        print("No layers frozen. Fine-tuning the entire vision model.")
+        return
+
+    # The vision model is at model.clip.model.vision_model
+    vision_model = model.clip.model.vision_model
+    
+    # 1. Freeze the patch and position embeddings
+    for param in vision_model.embeddings.parameters():
+        param.requires_grad = False
+
+    # 2. Freeze the 'pre_layrnorm'
+    if hasattr(vision_model, 'pre_layrnorm'):
+         for param in vision_model.pre_layrnorm.parameters():
+            param.requires_grad = False
+
+    # 3. Freeze the specified number of transformer layers
+    if freeze_layers_up_to > 0:
+        for i, layer in enumerate(vision_model.encoder.layers[:freeze_layers_up_to]):
+            for param in layer.parameters():
+                param.requires_grad = False
+            print(f"Froze vision layer {i}")
+
+    print(f"Successfully froze embeddings and {freeze_layers_up_to} vision layers.")
+
+def run_training_classification(cfg: dict, num_classes: int):
+    
+    config = CLIPTrainingConfig.from_dict(cfg)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    os.makedirs(config.output_dir, exist_ok=True)
+    
+    # 1. Initialize WandB
+    wandb.init(project=config.wandb_project, config=vars(config))
+
+    # 2. Initialize Model
+    model = CLIPForClassification(
+        model_name_or_path=config.model_name_or_path,
+        num_classes=num_classes
+    ).to(device)
+
+    transform = CLIPTransform(model.clip.processor, is_train=False)
+    train_loader, val_loader = get_dataloaders(
+        datasets=config.dataset_name,
+        data_root=config.data_root, 
+        transform=transform, 
+        batch_size=config.batch_size, 
+        num_workers=config.num_workers,
+        test_size=0.2,
+        labelkey="clip_label"
+    )
+    
+    # 3. Apply Layer Freezing
+    freeze_clip_layers(model, config.freeze_layers_up_to)
+
+    # 4. Initialize Optimizer
+    # Separate params for different LRs if needed, but this is a good start
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()), # Only optimize unfrozen params
+        lr=config.learning_rate,
+        weight_decay=config.weight_decay
+    )
+
+    # 5. Initialize Loss Function and Scaler
+    criterion = nn.CrossEntropyLoss()
+    scaler = torch.amp.GradScaler(enabled=config.use_amp)
+
+    # 6. Initialize LR Scheduler
+    num_training_steps = config.num_epochs * len(train_loader)
+    lr_scheduler = get_scheduler(
+        name=config.lr_scheduler_type,
+        optimizer=optimizer,
+        num_warmup_steps=0, # You can add a warmup_steps to your config
+        num_training_steps=num_training_steps,
+    )
+
+    # 7. Training Loop
+    best_val_accuracy = 0.0
+
+    for epoch in range(config.num_epochs):
+        print(f"--- Epoch {epoch + 1} / {config.num_epochs} ---")
+        
+        train_loss = train_one_epoch(
+            model=model,
+            dataloader=train_loader,
+            optimizer=optimizer,
+            scheduler=lr_scheduler,
+            criterion=criterion,
+            scaler=scaler,
+            device=device,
+            use_amp=config.use_amp,
+            gradient_accumulation_steps=config.gradient_accumulation_steps
+        )
+        
+        print(f"Epoch {epoch + 1} Training Loss: {train_loss:.4f}")
+
+        if (epoch + 1) % config.validation_interval == 0:
+            val_loss, val_accuracy = evaluate(
+                model=model,
+                dataloader=val_loader,
+                criterion=criterion,
+                device=device,
+                use_amp=config.use_amp
+            )
+            
+            print(f"Epoch {epoch + 1} Validation Loss: {val_loss:.4f}, Accuracy: {val_accuracy:.4f}")
+            wandb.log({
+                "epoch": epoch,
+                "train_loss": train_loss,
+                "val_loss": val_loss,
+                "val_accuracy": val_accuracy
+            })
+
+            if val_accuracy > best_val_accuracy:
+                best_val_accuracy = val_accuracy
+                if config.save_best_model:
+                    best_model_path = os.path.join(config.output_dir, f"{config.model_name_or_path.replace("/", "-")}-{config.dataset_name}-best_model")
+                    os.makedirs(best_model_path, exist_ok=True)
+                    model.clip.model.save_pretrained(best_model_path)
+                    model.clip.processor.save_pretrained(best_model_path)
+                    
+                    print(f"New best model saved in Hugging Face format to {best_model_path}")
+
+    wandb.finish()
+    print("Training finished.")
+    print(f"Best Validation Accuracy: {best_val_accuracy:.4f}")
 
 
 # --- Expanded Base Templates for Pathologies ---

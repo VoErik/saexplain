@@ -17,14 +17,16 @@ import json
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from jaxtyping import Float
 from numpy.typing import NDArray
 from pathlib import Path
 from safetensors.torch import save_file, load_file
 
-from src.utils.sae import DTYPE_MAP, filter_valid_dataclass_fields, SAE_CFG_FILENAME, SAE_WEIGHTS_FILENAME
-from src.sae.registry import get_sae_class, get_sae_training_class
+from sae.utils.misc import DTYPE_MAP, filter_valid_dataclass_fields, SAE_CFG_FILENAME, SAE_WEIGHTS_FILENAME
+from sae.utils.sbp import calculate_sbp_loss
+from sae.registry import get_sae_class, get_sae_training_class
 
 T = TypeVar("T")
 
@@ -66,6 +68,13 @@ class TrainingSAEConfig(SAEConfig, ABC):
     # https://transformer-circuits.pub/2024/april-update/index.html#training-saes
     # 0.1 corresponds to the "heuristic" initialization, use None to disable
     decoder_init_norm: float | None = 0.1
+    apply_sbp: bool = False
+    ema_beta: float | None = 0.99
+    num_classes: int | None = None
+    sbp_lambda: float = 10.0
+    sbp_alpha: float = 0.5
+    sbp_threshold: float = 1e-5
+    sbp_method: str = "entropy"
 
     @classmethod
     @abstractmethod
@@ -120,6 +129,7 @@ class TrainStepInput:
     coefficients: dict[str, float]
     dead_neuron_mask: torch.Tensor | None
     n_training_steps: int
+    labels: torch.Tensor | None = None
 
 @dataclass 
 class TrainStepOutput:
@@ -323,7 +333,7 @@ class SAE(nn.Module, ABC, Generic[T]):
         pass
 
     def process_state_dict_for_loading(self, state_dict: dict[str, Any]) -> None:
-        pass
+        state_dict.pop("ema_matrix", None)
 
     @classmethod
     def get_sae_class_for_architecture(
@@ -350,6 +360,12 @@ class TrainingSAE(SAE[T], ABC):
     def __init__(self, cfg):
         super().__init__(cfg)
         self.mse_loss_fn = mse_loss
+
+        if self.cfg.apply_sbp:
+            self.register_buffer(
+            "ema_matrix", 
+            torch.zeros(self.cfg.d_sae, self.cfg.num_classes)
+        )
 
     @abstractmethod
     def encode_with_hidden_pre(
@@ -427,6 +443,14 @@ class TrainingSAE(SAE[T], ABC):
         # Create losses dictionary with mse_loss
         losses = {"mse_loss": mse_loss}
 
+        # Apply same bird penalty
+        if self.cfg.apply_sbp:
+            sbp_loss = self.calculate_sbp(
+                step_input=step_input,
+                feature_acts=feature_acts
+            )
+            losses.update(sbp_loss)
+
         # Add architecture-specific losses to the dictionary
         # Make sure aux_losses is a dictionary with string keys and tensor values
         if isinstance(aux_losses, dict):
@@ -451,6 +475,29 @@ class TrainingSAE(SAE[T], ABC):
     @abstractmethod
     def get_coefficients(self) -> dict[str, float | TrainCoefficientConfig]: 
         ...
+
+    def calculate_sbp(self, step_input: TrainStepInput, feature_acts: torch.Tensor):
+        """Calculates the single bird penalty loss term."""
+        if step_input.labels is None:
+            raise ValueError("Labels are needed to calculate this penalty.")
+        labels_onehot = F.one_hot(step_input.labels, num_classes=self.cfg.num_classes).float()
+        weights = feature_acts.abs().pow(1.0)
+        counts = labels_onehot.sum(dim=0, keepdim=True) + 1e-8
+        activation_matrix = torch.matmul(weights.t(), labels_onehot) / counts
+        loss_input = (1.0 - self.cfg.ema_beta) * activation_matrix + self.cfg.ema_beta * self.ema_matrix.detach()
+        sbp_loss = calculate_sbp_loss(
+            activation_matrix=loss_input, 
+            num_classes=self.cfg.num_classes, 
+            alpha=self.cfg.sbp_alpha, 
+            support_threshold=self.cfg.sbp_threshold, 
+            method=self.cfg.sbp_method
+        )
+
+        with torch.no_grad():
+            self.ema_matrix = (1.0 - self.cfg.ema_beta) * activation_matrix.detach() + self.cfg.ema_beta * self.ema_matrix
+
+        scaled_sbp_loss = self.cfg.sbp_lambda * sbp_loss
+        return {"sbp_loss": scaled_sbp_loss}
 
     @torch.no_grad()
     def log_histograms(self) -> dict[str, NDArray[Any]]:

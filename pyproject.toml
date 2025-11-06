@@ -16,7 +16,9 @@ dependencies = [
     "opencv-python>=4.12.0.88",
     "openpyxl>=3.1.5",
     "seaborn>=0.13.2",
+    "streamlit>=1.51.0",
     "torchmetrics>=1.8.2",
+    "umap-learn>=0.5.9.post2",
     "vit-prisma @ git+https://github.com/Prisma-Multimodal/ViT-Prisma.git",
 ]
 
@@ -24,5 +26,5 @@ dependencies = [
 allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
-packages = ["src"]
+packages = ["src", "sae"]
 

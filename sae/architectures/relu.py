@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from jaxtyping import Float
 from numpy.typing import NDArray
-from src.sae.base import (
+from sae.core import (
     SAE,
     SAEConfig,
     TrainCoefficientConfig,
@@ -60,6 +60,7 @@ class ReLUSAE(SAE):
         features = einops.einsum(
             sae_in, self.W_enc, "... d_in, d_in d_sae -> ... d_sae"
         ) + self.b_enc
+        features = self.activation_fn(features)
         return features
     
     def decode(self, features):
@@ -109,7 +110,6 @@ class ReLUTrainingSAE(TrainingSAE):
         # Compute the p-norm (set by cfg.lp_norm) over the feature dimension
         sparsity = weighted_feature_acts.norm(p=self.cfg.lp_norm, dim=-1)
         l1_loss = (step_input.coefficients["l1"] * sparsity).mean()
-
         return {"l1_loss": l1_loss}
 
     def log_histograms(self) -> dict[str, NDArray[np.generic]]:

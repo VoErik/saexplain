@@ -8,8 +8,8 @@ from typing import List, Any
 from dataclasses import dataclass, field, fields
 
 
-from src.utils.load_backbone import load_backbone
-from src.utils.sae import filter_valid_dataclass_fields
+from src.backbones.utils import load_backbone
+from sae.utils.misc import filter_valid_dataclass_fields
 from src.data import get_dataloaders
 
 
@@ -130,7 +130,7 @@ class EmbeddingCache:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {device} for extraction.")
         
-        model, transform = load_backbone(self.model_path)
+        model, transform = load_backbone(self.model_path, is_train=False)
         model.to(device)
         model.eval()
 
@@ -148,6 +148,8 @@ class EmbeddingCache:
             
             with torch.no_grad():
                 for batch in tqdm(loader, desc=f"Extracting {split}"):
+                    if len(batch) > 1:
+                        batch = batch[0]
                     images = batch["pixel_values"].to(device)
                     
                     features = model(
@@ -155,6 +157,8 @@ class EmbeddingCache:
                         return_patch_embeddings=True,
                         layer_index=self.layer_index
                     )
+                    if len(features) > 1:
+                        features = features[0]
                     
                     all_embeddings.append(features.cpu())
 

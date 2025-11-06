@@ -1,6 +1,5 @@
 import contextlib
 import itertools
-import math
 
 from dataclasses import dataclass, field, fields, asdict
 from typing import Any, Literal
@@ -11,22 +10,20 @@ import wandb
 from torch.optim import Adam
 from tqdm.auto import tqdm
 
-from src.sae.schedule_scale import (
-    ActivationScaler,
+from sae.utils.scaler import ActivationScaler
+
+from sae.utils.schedulers import (
     CoefficientScheduler,
     get_lr_scheduler
 )
 
-from src.sae.embedding_cache import EmbeddingCache
-from src.sae.base import (
+from sae.core import (
     TrainCoefficientConfig,
     TrainStepInput,
     TrainStepOutput,
-    TrainingSAE,
-    TrainingSAEConfig
 )
 
-from src.utils.sae import SAE_SPARSITY_FILENAME, filter_valid_dataclass_fields
+from sae.utils.misc import SAE_SPARSITY_FILENAME, filter_valid_dataclass_fields
 
 
 @dataclass
@@ -106,6 +103,9 @@ class SAETrainerConfig:
     eval_metric_to_track: str = "losses/eval_loss"
     model_save_path: str = "./ckpts/sae/"
 
+    # experimental
+    apply_sbp: bool = False
+
     @property
     def total_training_steps(self) -> int:
         return self.total_training_samples // self.train_batch_size_samples
@@ -134,7 +134,7 @@ class SAETrainer:
     SAE Trainer class.
     """
 
-    data_provider: EmbeddingCache
+    data_provider: Any
     activation_scaler: ActivationScaler
     evaluator: Any | None
     coefficient_schedulers: dict[str, CoefficientScheduler]
@@ -143,11 +143,13 @@ class SAETrainer:
         self,
         cfg: SAETrainerConfig,
         sae,
-        data_provider: EmbeddingCache,
+        data_provider: Any,
         evaluator: Any | None = None,
     ) -> None:
         self.sae = sae
-        self.embedding_cache = data_provider
+        # data provider needs to have an attribute "train_dataset" that is of type torch.utils.data.Dataset
+        # TODO: make this agnostic, coupling too strong rn
+        self.embedding_cache = data_provider 
         self.evaluator = evaluator
         self.activation_scaler = ActivationScaler()
         self.cfg = cfg
@@ -356,6 +358,7 @@ class SAETrainer:
         self,
         sae,
         sae_in: torch.Tensor,
+        labels: torch.Tensor | None = None
     ) -> TrainStepOutput:
         sae.train()
 
@@ -375,6 +378,7 @@ class SAETrainer:
                     dead_neuron_mask=self.dead_neurons,
                     coefficients=self.get_coefficients(),
                     n_training_steps=self.n_training_steps,
+                    labels=labels
                 ),
             )
 
@@ -413,7 +417,7 @@ class SAETrainer:
         pbar = tqdm(total=self.cfg.total_training_samples, desc="Training SAE")
 
         train_loader = torch.utils.data.DataLoader(
-            self.embedding_cache.train_dataset,
+            self.embedding_cache,
             batch_size=self.cfg.train_batch_size_samples,
             shuffle=True,
             num_workers=4,
@@ -423,7 +427,7 @@ class SAETrainer:
 
         if self.sae.cfg.normalize_activations == "expected_average_only_in":
             est_loader = torch.utils.data.DataLoader(
-                self.embedding_cache.train_dataset,
+                self.embedding_cache,
                 batch_size=self.cfg.train_batch_size_samples,
                 shuffle=True
             )
@@ -435,11 +439,18 @@ class SAETrainer:
 
         while self.n_training_samples < self.cfg.total_training_samples:
             # Do a training step.
-            batch = next(loader_iter).to(self.sae.device)
-            self.n_training_samples += batch.shape[0]
+            batch_raw = next(loader_iter)
+            if len(batch_raw) == 2:
+                batch, labels = batch_raw
+                labels = labels.to(self.sae.device)
+            else:
+                batch = batch_raw
+                labels = None
+            batch = batch.to(self.sae.device)
             scaled_batch = self.activation_scaler(batch)
-
-            step_output = self._train_step(sae=self.sae, sae_in=scaled_batch)
+            self.n_training_samples += batch.shape[0]
+            
+            step_output = self._train_step(sae=self.sae, sae_in=scaled_batch, labels=labels)
 
             if self.cfg.logger.log_to_wandb:
                 self._log_train_step(step_output)
@@ -519,6 +530,7 @@ class TrainingRunnerConfig:
     # EMBEDDING CACHE CONFIG PARAMS
     datasets: list[str] = field(default_factory=lambda: ["fitzpatrick"])
     data_root: str = "../data"
+    num_classes: int = 200
     model_path: str = "../ckpts/clip/openai-clip-vit-base-patch16-['ham', 'fitzpatrick', 'scin', 'midas']-best_model"
     cache_dir: str = "../cache"
     cls_only: bool = False
@@ -537,6 +549,12 @@ class TrainingRunnerConfig:
     decoder_init_norm: float | None = 0.1
     normalize_activations: str = "expected_average_only_in"
     architecture: str = "jumprelu"
+    apply_sbp: bool = False
+    sbp_alpha: float = 0.5
+    sbp_threshold: float = 1e-5
+    sbp_method: str = "entropy"
+    sbp_lambda: float = 20.0
+    ema_beta: float = 0.1
 
     ## relu
     l1_coefficient: float = 3.0
@@ -584,41 +602,27 @@ class TrainingRunnerConfig:
         res = cls(**filtered_config_dict)
         return res
     
+    def __repr__(self) -> str:
+        """
+        Generates a human-readable, multi-line representation of the config.
+        This is much cleaner than the default dataclass repr for large configs.
+        """
+        # Get all field objects from the dataclass definition
+        all_fields = fields(self)
+        
+        lines = [f"{self.__class__.__name__}("]
+        
+        # Add each field as '    field_name=value,'
+        for f in all_fields:
+            field_name = f.name
+            value = getattr(self, field_name)
+            # Use !r to get the 'repr' of the value itself (e.g., adds quotes for strings)
+            lines.append(f"    {field_name}={value!r},")
+        
+        # Add the closing parenthesis
+        lines.append(")")
+        
+        # Join all lines with a newline
+        return "\n".join(lines)
 
-def train_sae(cfg_dict: dict):
-    cfg = TrainingRunnerConfig.from_dict(cfg_dict)
-    
-    if cfg.log_to_wandb:
-            wandb.init(
-                project=cfg.wandb_project,
-                entity=cfg.wandb_entity,
-                config=cfg.to_dict(),
-                name=cfg.run_name,
-                id=cfg.wandb_id,
-            )
-    sae = TrainingSAE.from_dict(
-        TrainingSAEConfig.from_dict(
-            cfg.to_dict()
-        ).to_dict()
-    )
-    cache = EmbeddingCache.from_dict(
-        cfg.to_dict()
-    )
-    evaluator = None
-
-    trainer_cfg = SAETrainerConfig.from_dict(
-        cfg.to_dict()
-    )
-    trainer_cfg.logger = LoggingConfig.from_dict(cfg_dict)
-    trainer = SAETrainer(
-        cfg=trainer_cfg,
-        sae=sae,
-        data_provider=cache,
-        evaluator=evaluator
-    )
-
-    _ = trainer.fit()
-
-    if cfg.log_to_wandb:
-        wandb.finish()
 

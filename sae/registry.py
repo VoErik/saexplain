@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 # avoid circular imports
 if TYPE_CHECKING:
-    from src.sae.base import SAE, SAEConfig, TrainingSAE, TrainingSAEConfig
+    from sae.core import SAE, SAEConfig, TrainingSAE, TrainingSAEConfig
 
 SAE_CLASS_REGISTRY: dict[str, tuple["type[SAE[Any]]", "type[SAEConfig]"]] = {}
 SAE_TRAINING_CLASS_REGISTRY: dict[

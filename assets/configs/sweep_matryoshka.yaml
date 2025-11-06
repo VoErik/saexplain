@@ -6,8 +6,11 @@ metric:
 
 parameters:
   architecture:
-    value: "topk"
+    value: "matryoshka"
 
+  matryoshka_widths:
+    value: [1536, 3072, 6144]
+    
   k:
     values: [10, 20, 40, 80, 160]
   
@@ -18,6 +21,11 @@ parameters:
     distribution: log_uniform_values
     min: 0.1
     max: 10.0
+    
+  topk_threshold_lr:
+    distribution: log_uniform_values
+    min: 1e-3
+    max: 1e-1
 
   d_sae:
     values: [1536, 3072, 6144, 9216, 12288]
@@ -41,7 +49,7 @@ parameters:
     value: 768
   total_training_samples:
     value: 200_000_000
-  autocast:
+  autryoshkaocast:
     value: true
   datasets:
     value: ["cub"]

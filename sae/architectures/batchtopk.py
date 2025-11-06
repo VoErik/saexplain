@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 from typing_extensions import override
 
-from src.sae.jumprelu import JumpReLUSAEConfig
-from src.sae.base import SAEConfig, TrainStepInput, TrainStepOutput
-from src.sae.topk import TopKTrainingSAE, TopKSAETrainingConfig
+from sae.architectures.jumprelu import JumpReLUSAEConfig
+from sae.core import SAEConfig, TrainStepInput, TrainStepOutput
+from sae.architectures.topk import TopKTrainingSAE, TopKSAETrainingConfig
 
 
 class BatchTopK(nn.Module):

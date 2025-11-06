@@ -6,7 +6,7 @@ def sweep_entrypoint(base_config_path: str):
     """
     This function is the entrypoint for a wandb agent.
     """
-    from src.sae.trainer import train_sae
+    from src.train_sae import train_sae
     with wandb.init() as run:
         sweep_config = run.config.as_dict()
         base_config = load_config(base_config_path)
@@ -26,14 +26,14 @@ def run_training(args):
 
     cfg = load_config(args.config)
 
-    if cfg.get("mode", None) == "backbone":
+    if cfg.get("mode", None) in ["backbone", "backbone-classify"]:
         from src.backbones import train_backbone
 
         with ExecTimer("Backbone Training"):
             train_backbone(cfg)
 
     elif cfg.get("mode", None) == "sae":
-        from src.sae.trainer import train_sae
+        from src.train_sae import train_sae
 
         if args.do_sweep:
             print(f"Starting a wandb sweep.")

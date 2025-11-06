@@ -3,15 +3,15 @@ mode: "sae"
 total_training_samples: 200_000_000
 device: "cuda"
 autocast: true
-lr: 0.0003
+lr: 0.0001
 lr_end: 0.00003
 lr_scheduler_name: "constant"
 lr_warm_up_steps: 1000
 adam_beta1: 0.9
 adam_beta2: 0.999
-lr_decay_steps: 30000
+lr_decay_steps: 15000
 n_restart_cycles: 1
-train_batch_size_samples: 4096
+train_batch_size_samples: 8192
 dead_feature_window: 5000
 feature_sampling_window: 5000
 # Note: The 'logger: LoggingConfig' field is represented
@@ -22,16 +22,14 @@ model_save_path: "./ckpts/sae/"
 
 # EMBEDDING CACHE CONFIG PARAMS
 datasets:
-  - "fitzpatrick"
-  - "ham"
-  - "scin"
-  - "midas"
+  - "cub"
 data_root: "../../data"
-model_path: "./ckpts/clip/openai-clip-vit-base-patch16-['ham', 'fitzpatrick', 'scin', 'midas']-best_model"
+num_classes: 200
+model_path: "./ckpts/clip/openai-clip-vit-base-patch16-cub-best_model"
 cache_dir: "./cache"
 cls_only: false
 extraction_batch_size: 64
-layer_index: -2
+layer_index: -1
 
 # EVALUATOR CONFIG PARAMS
 # (No default fields in the class for this section)
@@ -46,12 +44,18 @@ dtype: "float32"
 apply_b_dec_to_input: true
 decoder_init_norm: 0.1
 normalize_activations: "none"
-architecture: "topk"
+architecture: "jumprelu"
+apply_sbp: false
+ema_beta: 0.99
+sbp_lambda: 20.0
+sbp_alpha: 0.8
+sbp_threshold: 0.0001
+sbp_method: "alpha_mixing"
 
 ## relu
-l1_coefficient: 5.0
+l1_coefficient: 10.84986185498768
 lp_norm: 1.0
-l1_warm_up_steps: 5000
+l1_warm_up_steps: 10000
 
 ## topk
 k: 20
@@ -62,16 +66,16 @@ aux_loss_coefficient: 0.5132525619128137
 topk_threshold_lr: 0.01
 
 ## matryoshka
-matryoshka_widths: [1000, 2000, 10000]
+matryoshka_widths: [1000, 2000, 5000]
 
 ## jumprelu
-jumprelu_init_threshold: 0.01
-jumprelu_bandwidth: 0.05
+jumprelu_init_threshold: 0.1
+jumprelu_bandwidth: 0.1
 jumprelu_sparsity_loss_mode: "step"
 l0_coefficient: 1.0
 l0_warm_up_steps: 0
 pre_act_loss_coefficient: null
-jumprelu_tanh_scale: 4.0
+jumprelu_tanh_scale: 2.0
 
 # LOGGING CONFIG PARAMS
 log_to_wandb: true
@@ -80,7 +84,7 @@ log_activations_store_to_wandb: false
 log_optimizer_state_to_wandb: false
 wandb_project: "sae_training"
 wandb_id: null
-run_name: "relu_8x_l1_5.0"
+run_name: "sbp_sae"
 wandb_entity: "voerik"
 wandb_log_frequency: 10
 eval_every_n_wandb_logs: 100

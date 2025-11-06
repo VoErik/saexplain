@@ -1,0 +1,2 @@
+sae_dir: "./results/sae_stats/cub"
+data_dir: "../../data"

@@ -23,6 +23,8 @@ from sae.core import (
     TrainStepOutput,
 )
 
+from sae.eval import SAEEvaluator
+
 from sae.utils.misc import SAE_SPARSITY_FILENAME, filter_valid_dataclass_fields
 
 
@@ -144,12 +146,14 @@ class SAETrainer:
         cfg: SAETrainerConfig,
         sae,
         data_provider: Any,
-        evaluator: Any | None = None,
+        eval_dataset: Any,
+        evaluator: SAEEvaluator | None = None,
     ) -> None:
         self.sae = sae
         # data provider needs to have an attribute "train_dataset" that is of type torch.utils.data.Dataset
         # TODO: make this agnostic, coupling too strong rn
-        self.embedding_cache = data_provider 
+        self.embedding_cache = data_provider
+        self.eval_embedding_cache = eval_dataset 
         self.evaluator = evaluator
         self.activation_scaler = ActivationScaler()
         self.cfg = cfg
@@ -192,6 +196,8 @@ class SAETrainer:
         )
         self.coefficient_schedulers = {}
         for name, coeff_cfg in self.sae.get_coefficients().items():
+            print(name)
+            print(coeff_cfg)
             if not isinstance(coeff_cfg, TrainCoefficientConfig):
                 coeff_cfg = TrainCoefficientConfig(value=coeff_cfg, warm_up_steps=0)
             self.coefficient_schedulers[name] = CoefficientScheduler(
@@ -301,7 +307,7 @@ class SAETrainer:
         ) == 0:
             self.sae.eval()
             eval_metrics = (
-                self.evaluator(self.sae, self.embedding_cache, self.activation_scaler)
+                self.evaluator(self.sae, self.eval_embedding_cache, self.activation_scaler)
                 if self.evaluator is not None
                 else {}
             )
@@ -531,13 +537,18 @@ class TrainingRunnerConfig:
     datasets: list[str] = field(default_factory=lambda: ["fitzpatrick"])
     data_root: str = "../data"
     num_classes: int = 200
-    model_path: str = "../ckpts/clip/openai-clip-vit-base-patch16-['ham', 'fitzpatrick', 'scin', 'midas']-best_model"
+    model_architecture: str = "dinov3"
+    model_name: str | None = None
+    model_checkpoint: str = "./ckpts/dinov3/dinov3-vit_base_patch16_dinov3.lvd1689m-cub.safetensors"
     cache_dir: str = "../cache"
     cls_only: bool = False
     extraction_batch_size: int = 64
-    layer_index: int = -1
+    layer_name: list[str] = field(default_factory=lambda: ["blocks.10"])
 
     # EVALUATOR CONFIG PARAMS
+    eval_batch_size: int = 1024
+    num_workers: int = 4
+    run_expensive_metrics: bool = False
 
     # SAE CONFIG PARAMS
     ## Basic configuration

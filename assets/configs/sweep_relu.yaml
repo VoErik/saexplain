@@ -1,8 +1,8 @@
 program: main.py
 method: random
 metric:
-  name: losses/mse_loss
-  goal: minimize
+  name: losses/eval_explained_variance
+  goal: maximize
 
 parameters:
   architecture:
@@ -10,14 +10,14 @@ parameters:
 
   l1_coefficient:
     distribution: log_uniform_values
-    min: 1.0
+    min: 0.5
     max: 20.0
     
   l1_warm_up_steps:
-    values: [1000, 5000, 10000]
+    values: [1000, 2000, 3000]
 
   d_sae:
-    values: [1536, 3072, 6144, 9216, 12288] # d_in * [2, 4, 8, 12, 16]
+    values: [1536, 3072, 6144, 9216, 12288, 24576] # d_in * [2, 4, 8, 12, 16]
   
   lr:
     values: [1e-4, 3e-4, 5e-4]
@@ -26,10 +26,10 @@ parameters:
     values: ["constant", "cosineannealing", "cosineannealingwarmrestarts"]
 
   lr_warm_up_steps:
-    values: [1000, 5000]
+    values: [1000, 2000, 3000, 5000]
     
   train_batch_size_samples:
-    values: [4096, 8192]
+    values: [8192]
 
   dead_feature_window:
     values: [2000, 5000]
@@ -37,7 +37,7 @@ parameters:
   d_in:
     value: 768
   total_training_samples:
-    value: 200_000_000
+    value: 100_000_000
   autocast:
     value: true
   datasets:

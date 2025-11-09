@@ -1,6 +1,7 @@
 import wandb
 from sae.core import TrainingSAE, TrainingSAEConfig
 from sae.trainer import TrainingRunnerConfig, SAETrainerConfig, SAETrainer, LoggingConfig
+from sae.eval import SAEEvaluator, EvaluationConfig
 
 
 def train_sae(cfg_dict: dict):
@@ -21,17 +22,17 @@ def train_sae(cfg_dict: dict):
             cfg.to_dict()
         ).to_dict()
     )
-    if cfg.apply_sbp:
-        from src.utils.embedding_cache_with_labels import EmbeddingCache
-        cache = EmbeddingCache.from_dict(
-            cfg.to_dict()
+
+    from src.utils.embedding_cache_with_labels import EmbeddingCache
+    cache = EmbeddingCache.from_dict(
+        cfg.to_dict()
+    )
+   
+    evaluator = SAEEvaluator(
+         EvaluationConfig.from_dict(
+              cfg.to_dict()
+            )
         )
-    else:
-        from src.utils.embedding_cache import EmbeddingCache
-        cache = EmbeddingCache.from_dict(
-            cfg.to_dict()
-        )
-    evaluator = None
 
     trainer_cfg = SAETrainerConfig.from_dict(
         cfg.to_dict()
@@ -41,6 +42,7 @@ def train_sae(cfg_dict: dict):
         cfg=trainer_cfg,
         sae=sae,
         data_provider=cache.train_dataset,
+        eval_dataset=cache.eval_dataset,
         evaluator=evaluator
     )
 

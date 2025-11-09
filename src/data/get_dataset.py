@@ -9,7 +9,8 @@ from src.data.cub import CUB200
 def get_dataloaders(
     datasets: List,
     data_root: str,
-    transform, 
+    train_transform,
+    val_transform, 
     batch_size: int = 32,
     num_workers: int = 8,
     test_size: float = 0.2,
@@ -29,13 +30,13 @@ def get_dataloaders(
         train_ds = CUB200(
             root=data_root,
             split="train",
-            transform=transform
+            transform=train_transform
         )
 
         test_ds = CUB200(
             root=data_root,
             split="test",
-            transform=transform
+            transform=val_transform
         )
         train_loader = DataLoader(
             train_ds,

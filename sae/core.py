@@ -391,9 +391,10 @@ class TrainingSAE(SAE[T], ABC):
         Decodes feature activations back into input space,
         applying optional finetuning scale, hooking, out normalization, etc.
         """
-        sae_out = einops.einsum(
+        sae_out_pre = einops.einsum(
             features, self.W_dec, "... d_sae, d_sae d_in -> ... d_in"
         ) + self.b_dec
+        sae_out = self.run_time_activation_norm_fn_out(sae_out_pre)
         return sae_out
     
 
@@ -449,7 +450,8 @@ class TrainingSAE(SAE[T], ABC):
                 step_input=step_input,
                 feature_acts=feature_acts
             )
-            losses.update(sbp_loss)
+            losses.update({"sbp_loss": sbp_loss})
+            total_loss += sbp_loss
 
         # Add architecture-specific losses to the dictionary
         # Make sure aux_losses is a dictionary with string keys and tensor values
@@ -497,7 +499,7 @@ class TrainingSAE(SAE[T], ABC):
             self.ema_matrix = (1.0 - self.cfg.ema_beta) * activation_matrix.detach() + self.cfg.ema_beta * self.ema_matrix
 
         scaled_sbp_loss = self.cfg.sbp_lambda * sbp_loss
-        return {"sbp_loss": scaled_sbp_loss}
+        return scaled_sbp_loss
 
     @torch.no_grad()
     def log_histograms(self) -> dict[str, NDArray[Any]]:

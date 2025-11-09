@@ -4,11 +4,6 @@ import os
 import argparse
 import utils
 
-import streamlit as st
-import os
-import argparse
-import utils
-
 def main(base_dir: str):
     st.set_page_config(
         layout="wide",

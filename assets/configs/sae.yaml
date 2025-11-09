@@ -5,19 +5,19 @@ device: "cuda"
 autocast: true
 lr: 0.0001
 lr_end: 0.00003
-lr_scheduler_name: "constant"
+lr_scheduler_name: "cosineannealing"
 lr_warm_up_steps: 1000
 adam_beta1: 0.9
 adam_beta2: 0.999
-lr_decay_steps: 15000
+lr_decay_steps: 7500
 n_restart_cycles: 1
 train_batch_size_samples: 8192
-dead_feature_window: 5000
+dead_feature_window: 2000
 feature_sampling_window: 5000
 # Note: The 'logger: LoggingConfig' field is represented
 # by the top-level 'logger:' block below.
 eval_metric_mode: "min"
-eval_metric_to_track: "losses/mse_loss"
+eval_metric_to_track: "losses/eval_loss"
 model_save_path: "./ckpts/sae/"
 
 # EMBEDDING CACHE CONFIG PARAMS
@@ -25,26 +25,31 @@ datasets:
   - "cub"
 data_root: "../../data"
 num_classes: 200
-model_path: "./ckpts/clip/openai-clip-vit-base-patch16-cub-best_model"
+model_architecture: "dinov3"
+model_name: null
+model_checkpoint: "./ckpts/dinov3/dinov3-vit_base_patch16_dinov3.lvd1689m-cub.safetensors"
 cache_dir: "./cache"
 cls_only: false
 extraction_batch_size: 64
-layer_index: -1
+layer_name:
+  - "blocks.10"
 
 # EVALUATOR CONFIG PARAMS
 # (No default fields in the class for this section)
-evaluator: {}
+eval_batch_size: 1024
+num_workers: 4
+run_expensive_metrics: false
 
 # SAE CONFIG PARAMS
 ## Basic configuration
 d_in: 768
-d_sae: 12288
+d_sae: 6144
 device: "cuda"
 dtype: "float32"
 apply_b_dec_to_input: true
 decoder_init_norm: 0.1
-normalize_activations: "none"
-architecture: "jumprelu"
+normalize_activations: "layer_norm"
+architecture: "relu"
 apply_sbp: false
 ema_beta: 0.99
 sbp_lambda: 20.0
@@ -53,9 +58,9 @@ sbp_threshold: 0.0001
 sbp_method: "alpha_mixing"
 
 ## relu
-l1_coefficient: 10.84986185498768
+l1_coefficient: 2.545850855591968
 lp_norm: 1.0
-l1_warm_up_steps: 10000
+l1_warm_up_steps: 1000
 
 ## topk
 k: 20
@@ -87,4 +92,4 @@ wandb_id: null
 run_name: "sbp_sae"
 wandb_entity: "voerik"
 wandb_log_frequency: 10
-eval_every_n_wandb_logs: 100
+eval_every_n_wandb_logs: 500

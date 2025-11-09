@@ -1,7 +1,7 @@
 import json
 import os
 from dataclasses import dataclass
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,26 +14,50 @@ from sae.core import SAE
 from scipy.cluster.hierarchy import linkage, fcluster, dendrogram
 from scipy.spatial.distance import squareform
 from tqdm.auto import tqdm
+from sae.utils.misc import filter_valid_dataclass_fields
+
 
 
 COLORMAP = "coolwarm"
 
 @dataclass
-class StatsConfig:
+class AtlasConfig:
+    # backbone 
+    architecture: str = "clip"
     backbone_path: str = "../ckpts/clip/openai-clip-vit-base-patch16-cub-best_model"
+    layer_name: list[str] = ["blocks.10"]
+
+    # sae
     sae_path: str = "../ckpts/sae/sae_topk_d12288"
-    dataset: str | list = "cub" #field(default_factory=lambda: ["cub"])
-    data_root: str = "../../../data/"
-    device: str = "cuda"
-    k: int = 10
-    save_directory = "../results/sae_stats"
-    layer_index: int = -1
-    cls_only: bool = False
     aggregation_method: str = "mean"
+
+    # data
+    dataset: str | list = "cub" #field(default_factory=lambda: ["cub"])
+    data_root: str = "../../data/"
+    cls_only: bool = False
+
+    # misc
+    device: str = "cuda"
+    save_directory: str = "../results/sae_stats"
     num_workers: int = 12
-    atlas_threshold: float = 0.1
+
+    # cluster
     k_clusters: int = 100
     cluster_threshold: float = 0.6
+    cluster_method: str = "jaccard"
+    rank_dimensions_by: str = "top_mean_acts"
+
+    # atlas
+    k: int = 10
+    atlas_threshold: float = 0.1
+
+    @classmethod
+    def from_dict(cls, config_dict: dict[str, Any]):
+        filtered_config_dict = filter_valid_dataclass_fields(config_dict, cls)
+        res = cls(**filtered_config_dict)
+        return res
+    
+    
 
 def initialize_storage_tensors(
     d_sae: int, k: int
@@ -83,24 +107,19 @@ def compute_sae_embedding(sae, backbone_embeddings, aggregation_method: str = "m
         embeddings = aggregate_embeddings(embeddings, method=aggregation_method)
     return embeddings
 
-# TODO: this is coupled to the backbone having a processor -> change in future
 def compute_backbone_embeddings(
         backbone, 
         image_batch, 
-        device, 
-        layer_index: int = -1, 
+        layer_name: list[str] = ["blocks.10"], 
         cls_only: bool = False
     ):
-    inputs = backbone.processor(
-        images=image_batch,
-        return_tensors="pt",
-        padding=True
-    ).to(device)
 
-    embeddings, _ = backbone(**inputs, return_patch_embeddings=True, layer_index=layer_index)
-
+    out = backbone.forward_intermediates(image_batch, layer_name)
+    
     if cls_only:
-        embeddings = embeddings[:, 0, :]
+        embeddings = out.cls_embedding
+    else:
+        embeddings = out.patch_embeddings
     return embeddings
 
 def compute_sae_statistics(sae_acts):
@@ -140,9 +159,7 @@ def process_batch(
     backbone_embedding = compute_backbone_embeddings(
         backbone=backbone, 
         image_batch=batch[0], 
-        device=cfg.device, 
         cls_only=cfg.cls_only, 
-        layer_index=cfg.layer_index
     )
 
     if not cfg.cls_only:
@@ -188,30 +205,23 @@ def save_stats(
         storage,
         cfg
 ): 
-    if isinstance(cfg.dataset, list):
-        dataset_name = "-".join(cfg.dataset)
-    else:
-        dataset_name = cfg.dataset
-    full_save_dir = os.path.join(cfg.save_directory, dataset_name, cfg.sae_path.split("/")[-1])
-    os.makedirs(full_save_dir, exist_ok=True)
+    os.makedirs(cfg.save_directory, exist_ok=True)
 
     torch.save(
         storage["max_activating_image_indices"],
-        f"{full_save_dir}/max_activating_image_indices.pt",
+        f"{cfg.save_directory}/max_activating_image_indices.pt",
     )
     torch.save(
         storage["max_activating_image_values"],
-        f"{full_save_dir}/max_activating_image_values.pt",
+        f"{cfg.save_directory}/max_activating_image_values.pt",
     )
-    torch.save(storage["sparsity"], f"{full_save_dir}/sparsity.pt")
-    torch.save(storage["mean_acts"], f"{full_save_dir}/mean_acts.pt")    
+    torch.save(storage["sparsity"], f"{cfg.save_directory}/sparsity.pt")
+    torch.save(storage["mean_acts"], f"{cfg.save_directory}/mean_acts.pt")    
 
 def analyze_and_cluster_features(
         top_k_activations: torch.Tensor,
         top_k_indices: List[int],
-        savedir: str,
-        metric_method: tuple,
-        cluster_threshold: float = 0.6
+        cfg: AtlasConfig
 ) -> np.ndarray:
     """
     Correlates top k features using the specified metric and saves clusters.
@@ -219,20 +229,17 @@ def analyze_and_cluster_features(
     Args:
         top_k_activations: The continuous activation slice, shape [N_images, k_features]
         top_k_indices: The original indices of the k features (list of length k)
-        savedir: Path to save plots and cluster files.
-        metric: Similarity metric to use, either 'pearson' or 'jaccard'.
-        cluster_threshold: The distance threshold for forming clusters.
+        cfg: AtlasConfig
     """
     k = len(top_k_indices)
-    metric, method = metric_method
     
-    if metric == 'pearson':
+    if cfg.cluster_method == 'pearson':
         with np.errstate(divide='ignore', invalid='ignore'):
             similarity_matrix = np.corrcoef(top_k_activations.cpu().numpy(), rowvar=False)
         similarity_matrix = np.nan_to_num(similarity_matrix)
         cbar_label = 'Pearson Correlation'
     
-    elif metric == 'jaccard':
+    elif cfg.cluster_method == 'jaccard':
         B = (top_k_activations > 0).cpu().numpy().astype(float)
         
         intersection_matrix = B.T @ B
@@ -246,7 +253,7 @@ def analyze_and_cluster_features(
     else:
         raise ValueError("metric must be 'pearson' or 'jaccard'")
 
-    if metric == 'pearson':
+    if cfg.cluster_method == 'pearson':
         distance_matrix = 1 - np.abs(similarity_matrix)
     else: # Jaccard
         distance_matrix = 1 - similarity_matrix
@@ -256,7 +263,7 @@ def analyze_and_cluster_features(
     
     linkage_matrix = linkage(squareform(distance_matrix), method="ward")
 
-    cluster_labels = fcluster(linkage_matrix, t=cluster_threshold, criterion="distance")
+    cluster_labels = fcluster(linkage_matrix, t=cfg.cluster_threshold, criterion="distance")
     
     feature_clusters = {}
     for i, cluster_id in enumerate(cluster_labels):
@@ -265,7 +272,7 @@ def analyze_and_cluster_features(
             feature_clusters[str(cluster_id)] = []
         feature_clusters[str(cluster_id)].append(int(original_dim_idx))
 
-    cluster_path = f'{savedir}/sae_clusters_top{k}_{metric}_{method}.json'
+    cluster_path = f'{cfg.save_directory}/sae_clusters_top{k}_{cfg.cluster_method}.json'
     with open(cluster_path, 'w') as f:
         json.dump(feature_clusters, f, indent=2)
 
@@ -277,8 +284,8 @@ def analyze_and_cluster_features(
         cmap=COLORMAP, center=0, figsize=(12, 12),
         cbar_kws={'label': cbar_label}
     )
-    plt.suptitle(f"Hierarchical Clustering of Top {k} Features ({metric.title()})", y=1.02)
-    plt.savefig(f'{savedir}/hierarchical_clustering_top_{k}_{metric}_{method}.png', dpi=300)
+    plt.suptitle(f"Hierarchical Clustering of Top {k} Features ({cfg.cluster_method.title()})", y=1.02)
+    plt.savefig(f'{cfg.save_directory}/hierarchical_clustering_top_{k}_{cfg.cluster_method}.png', dpi=300)
     plt.close()
 
     return linkage_matrix
@@ -286,14 +293,12 @@ def analyze_and_cluster_features(
 def plot_dendrogram_with_images(
         linkage_matrix: np.ndarray,
         top_k_indices: List[int],
-        atlas_path: str,
-        k_images: int = 3,
-        savedir: str = "plots",
-        metric: tuple = ("jaccard", "common")
+        cfg: AtlasConfig
 ):
     """
     Plots the clustering dendrogram with top activating images for the top-k features.
     """
+    atlas_path = f"{cfg.save_directory}/atlas.json"
     try:
         with open(atlas_path, 'r') as f:
             atlas = json.load(f)
@@ -322,7 +327,7 @@ def plot_dendrogram_with_images(
         ax_img_grid = fig.add_subplot(gs[1, col_idx])
         
         feature_key = f"feature_{original_feature_idx}"
-        top_items = atlas.get(feature_key, [])[:k_images]
+        top_items = atlas.get(feature_key, [])[:5] # 5 images per leaf
 
         if not top_items:
             ax_img_grid.text(0.5, 0.5, f'N: {original_feature_idx}\n(No images)', ha='center')
@@ -344,29 +349,29 @@ def plot_dendrogram_with_images(
         ax_img_grid.set_title(f'N: {original_feature_idx}', fontsize=10)
         ax_img_grid.axis("off")
 
-    path = f'{savedir}/dendrogram_with_images_{metric[0]}_{metric[1]}.png'
+    path = f'{cfg.save_directory}/dendrogram_with_images_{cfg.cluster_method}.png'
     plt.savefig(path, bbox_inches='tight', dpi=300)
     plt.close()
 
-def rank_dimensions(stats_path: str, sort_by: str = "top_mean_acts") -> list[int]:
+def rank_dimensions(cfg: AtlasConfig) -> list[int]:
     """
     Loads saved stats and returns a sorted list of all feature indices.
     """
     try:
-        sparsity = torch.load(f"{stats_path}/sparsity.pt").cpu()
-        mean_acts = torch.load(f"{stats_path}/mean_acts.pt").cpu()
-        max_vals = torch.load(f"{stats_path}/max_activating_image_values.pt")
+        sparsity = torch.load(f"{cfg.save_directory}/sparsity.pt").cpu()
+        mean_acts = torch.load(f"{cfg.save_directory}/mean_acts.pt").cpu()
+        max_vals = torch.load(f"{cfg.save_directory}/max_activating_image_values.pt")
     except FileNotFoundError:
-        print(f"Error: Could not load stats files from {stats_path}")
+        print(f"Error: Could not load stats files from {cfg.save_directory}")
         return []
 
     all_indices = torch.arange(len(sparsity))
 
 
-    if sort_by == "top_k_strength":
+    if cfg.rank_dimensions_by == "top_k_strength":
         scores = torch.mean(max_vals, dim=1)
         sort_descending = True
-    elif sort_by == "top_mean_acts":
+    elif cfg.rank_dimensions_by == "top_mean_acts":
         scores = mean_acts # Total sum
         sort_descending = True
     else: # Default to sorting by index
@@ -379,25 +384,16 @@ def rank_dimensions(stats_path: str, sort_by: str = "top_mean_acts") -> list[int
     return final_sorted_feature_indices.numpy().tolist()
 
 @torch.inference_mode()
-def run_stats(cfg, dataset, backbone):
-    dataset_name = "-".join(cfg.dataset) if isinstance(cfg.dataset, list) else cfg.dataset
-    stats_path = os.path.join(cfg.save_directory, dataset_name, cfg.sae_path.split("/")[-1])
+def run_stats(cfg, dataloader, backbone):
 
     sae = SAE.load(cfg.sae_path).to(cfg.device)
-
-    def _collate(batch):
-        images = [item[0] for item in batch]
-        labels = [item[1] for item in batch]
-        return images, labels
-    
-    dl = torch.utils.data.DataLoader(dataset, batch_size=32, collate_fn=_collate)
 
     storage = initialize_storage_tensors(d_sae=sae.cfg.d_sae, k=cfg.k)
     backbone_cache = {}
     all_sae_activations_list = []
     num_processed = 0
 
-    for batch in tqdm(dl, desc="Fetching Activations"):
+    for batch in tqdm(dataloader, desc="Fetching Activations"):
         storage, backbone_cache, sae_embedding = process_batch(
             batch=batch,
             backbone=backbone,
@@ -421,40 +417,27 @@ def run_stats(cfg, dataset, backbone):
         generate_atlas(
             cfg=cfg,
             sae=sae,
-            dataset=dataset,
+            dataset=dataloader.dataset,
             backbone_cache=backbone_cache
         )
 
     
     all_activations = torch.cat(all_sae_activations_list, dim=0)
     del all_sae_activations_list
-    ranked_dims_common = rank_dimensions(stats_path, sort_by="top_mean_acts")
-    top_k_indices_common = ranked_dims_common[:cfg.k_clusters]
-    top_k_common_slice = all_activations[:, top_k_indices_common]
+    ranked_dims = rank_dimensions(cfg)
+    top_k_indices = ranked_dims[:cfg.k_clusters]
+    top_k_slice = all_activations[:, top_k_indices]
     
     torch.save(
-        top_k_common_slice, 
-        f"{stats_path}/top_{cfg.k_clusters}_common_activations.pt"
+        top_k_slice, 
+        f"{cfg.save_dir}/top_{cfg.k_clusters}_common_activations.pt"
     )
     torch.save(
-        top_k_indices_common, 
-        f"{stats_path}/top_{cfg.k_clusters}_common_indices.pt"
-    )
-
-    ranked_dims_strong = rank_dimensions(stats_path, sort_by="top_k_strength")
-    top_k_indices_strong = ranked_dims_strong[:cfg.k_clusters]
-    top_k_strong_slice = all_activations[:, top_k_indices_strong]
-    
-    torch.save(
-        top_k_strong_slice, 
-        f"{stats_path}/top_{cfg.k_clusters}_strong_activations.pt"
-    )
-    torch.save(
-        top_k_indices_strong, 
-        f"{stats_path}/top_{cfg.k_clusters}_strong_indices.pt"
+        top_k_indices, 
+        f"{cfg.save_dir}/top_{cfg.k_clusters}_common_indices.pt"
     )
     
-    del all_activations, top_k_common_slice, top_k_strong_slice
+    del all_activations, top_k_slice
 
     run_all_clustering_from_checkpoint(cfg)
     
@@ -519,55 +502,31 @@ def generate_atlas(cfg, sae, dataset, backbone_cache):
 
 def run_all_clustering_from_checkpoint(cfg):
     """
-    Runs all 4 clustering analyses (2 rankings x 2 metrics)
-    from the saved checkpoints.
+    Runs clustering analyses from the saved checkpoints.
     """
-    dataset_name = "-".join(cfg.dataset) if isinstance(cfg.dataset, list) else cfg.dataset
-    stats_path = os.path.join(cfg.save_directory, dataset_name, cfg.sae_path.split("/")[-1])
-    atlas_path = os.path.join(stats_path, f"atlas.json")
 
-    rank_methods = {
-        "common": (
-            f"{stats_path}/top_{cfg.k_clusters}_common_activations.pt",
-            f"{stats_path}/top_{cfg.k_clusters}_common_indices.pt"
-        ),
-        "strong": (
-            f"{stats_path}/top_{cfg.k_clusters}_strong_activations.pt",
-            f"{stats_path}/top_{cfg.k_clusters}_strong_indices.pt"
-        )
-    }
+    acts_path = f"{cfg.save_directory}/top_{cfg.k_clusters}_activations.pt"
+    indices_path = f"{cfg.save_directory}/top_{cfg.k_clusters}_indices.pt"
     
-    metrics = ['pearson', 'jaccard']
+    try:
+        top_k_activations = torch.load(acts_path)
+        top_k_indices = torch.load(indices_path)
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Error: Could not find checkpoint files for k={cfg.k_clusters}.")
+        
+    linkage_matrix = analyze_and_cluster_features(
+        top_k_activations=top_k_activations,
+        top_k_indices=top_k_indices,
+        cfg=cfg
+    )
 
-    for rank_name, (acts_path, indices_path) in rank_methods.items():
-        try:
-            top_k_activations = torch.load(acts_path)
-            top_k_indices = torch.load(indices_path)
-        except FileNotFoundError:
-            print(f"Error: Could not find checkpoint files for k={cfg.k_clusters}, rank='{rank_name}'.")
-            print("Please run the full 'run_stats_and_generate_atlas' function first.")
-            continue
-            
-        for metric in metrics:
-            
-            linkage_matrix = analyze_and_cluster_features(
-                top_k_activations=top_k_activations,
-                top_k_indices=top_k_indices,
-                savedir=stats_path,
-                metric_method=(metric, rank_name),
-                cluster_threshold=cfg.cluster_threshold
-            )
-
-            plot_dendrogram_with_images(
-                linkage_matrix=linkage_matrix,
-                top_k_indices=top_k_indices,
-                atlas_path=atlas_path, 
-                k_images=3,
-                savedir=stats_path,
-                metric=(metric, rank_name)
-            )
+    plot_dendrogram_with_images(
+        linkage_matrix=linkage_matrix,
+        top_k_indices=top_k_indices,
+        cfg=cfg
+    )
     
-def plot_firing_frequencies(sparsity):
+def plot_firing_frequencies(sparsity, savedir=None):
     """Plots firing frequency histogram of living features."""
     total_features = sparsity.numel()
     dead_features_mask = (sparsity == 0)
@@ -585,11 +544,16 @@ def plot_firing_frequencies(sparsity):
         plt.hist(log_frequencies, bins=100)
         plt.xlabel("Log10 Activation Frequency")
         plt.ylabel("# Features")
-        plt.show()
+        if savedir is not None:
+            plt.savefig(f"{savedir}/firing_frequencies.png")
+            plt.close()
+        else:
+            plt.show()
     else:
         print("All features are dead.")
+    
 
-def plot_firing_frequency_against_mean_activation(sparsity, mean_acts):
+def plot_firing_frequency_against_mean_activation(sparsity, mean_acts, savedir=None):
     """Plots firing frequency against the mean activation value for each living feature."""
     dead_features_mask = (sparsity == 0)
     num_dead = dead_features_mask.sum().item()
@@ -605,7 +569,11 @@ def plot_firing_frequency_against_mean_activation(sparsity, mean_acts):
         plt.scatter(log_freq, log_mean_act, alpha=0.1, s=5)
         plt.xlabel("Log10 Activation Frequency")
         plt.ylabel("Log10 Mean Activation Value")
-        plt.show()
+        if savedir is not None:
+            plt.savefig(f"{savedir}/firing_frequencies_vs_mean_acts.png")
+            plt.close()
+        else:
+            plt.show()
     else:
         print("All features are dead, nothing to plot.")
 
@@ -747,3 +715,27 @@ def visualize_atlas(
     fig.suptitle(f"Atlas Visualization (Mode: '{mode.upper()}')", fontsize=16, y=1.02)
     plt.tight_layout(rect=[0.05, 0, 1, 1])
     plt.show()
+
+
+def run_post_hoc_eval(cfg: AtlasConfig, backbone, dataloader):
+    _ = run_stats(
+        cfg=cfg,
+        dataloader=dataloader,
+        backbone=backbone
+    )
+
+    generate_and_save_umap(
+        sae_path=cfg.sae_path,
+        save_dir=cfg.save_directory
+    )
+
+    mean_acts = torch.load(f"{cfg.save_directory}/mean_acts.pt")
+    sparsity = torch.load(f"{cfg.save_directory}/sparsity.pt")
+
+    print(f"Max Sparsity: {sparsity.max().item()}")
+    print(f"Min Sparsity: {sparsity.min().item()}")
+    print(f"Max Mean Acts: {mean_acts.max().item()}")
+    print(f"Min Mean Acts: {mean_acts.min().item()}")
+
+    plot_firing_frequencies(sparsity=sparsity, savedir=cfg.save_directory)
+    plot_firing_frequency_against_mean_activation(sparsity=sparsity, mean_acts=mean_acts, savedir=cfg.save_directory)

@@ -17,6 +17,7 @@ dependencies = [
     "openpyxl>=3.1.5",
     "seaborn>=0.13.2",
     "streamlit>=1.51.0",
+    "timm>=1.0.20",
     "torchmetrics>=1.8.2",
     "umap-learn>=0.5.9.post2",
     "vit-prisma @ git+https://github.com/Prisma-Multimodal/ViT-Prisma.git",

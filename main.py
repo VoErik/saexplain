@@ -48,8 +48,8 @@ def main():
         from src.interp_tools import run_interpretability
         run_interpretability(ARGS.config)
     elif ARGS.mode == "eval":
-        from src.eval import run_fm_evaluation
-        run_fm_evaluation(ARGS.config)
+        from src.eval import run_post_hoc_evaluation
+        run_post_hoc_evaluation(ARGS.config)
     else:
         raise ValueError(f"Unknown mode: {ARGS.mode}")
 

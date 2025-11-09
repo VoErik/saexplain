@@ -1,0 +1,29 @@
+# backbone 
+architecture: "clip"
+backbone_path: "../ckpts/clip/openai-clip-vit-base-patch16-cub-best_model"
+layer_name:
+  - "blocks.10"
+
+# sae
+sae_path: "../ckpts/sae/sae_topk_d12288"
+aggregation_method: "mean"
+
+# data
+dataset: "cub" 
+data_root: "../../data/"
+cls_only: false
+
+# misc
+device: "cuda"
+save_directory: "../results/sae_stats"
+num_workers: 12
+
+# cluster
+k_clusters: 100
+cluster_threshold: 0.6
+cluster_method: "jaccard"
+rank_dimensions_by:  "top_mean_acts"
+
+# atlas
+k: 10
+atlas_threshold: 0.1

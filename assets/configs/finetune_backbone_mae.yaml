@@ -1,0 +1,29 @@
+mode: "backbone"
+architecture: "mae" # Example generic architecture
+pretrained: true
+model_name: null                     # Optional specific model name
+checkpoint_path: null                # Optional path to load from
+is_train: true
+
+# MLP Head Config
+hidden_sizes: []                     # Empty list for linear classifier, e.g., [512, 256] for MLP
+num_classes: 200
+dropout_rate: 0.0
+
+# Training & Optimization
+freezing_mode: "partial"              # Options: 'frozen', 'partial', 'unfrozen'
+num_unfrozen_blocks: 8               # Only used if freezing_mode is 'partial'
+lr_backbone: 5.0e-6
+lr_head: 1.0e-3
+weight_decay: 0.05
+epochs: 100
+device: "cuda"                       # Or "cpu"
+
+# Paths
+backbone_save_path: "./ckpts/"
+head_save_path: "./ckpts/"
+
+# Data
+data_root: "../../data"
+datasets:
+  - "cub"

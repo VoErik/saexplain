@@ -169,10 +169,10 @@ class JumpReLUSAE(SAE[JumpReLUSAEConfig]):
         """
         Decode the feature activations back to the input space.
         """
-        sae_out = einops.einsum(
+        sae_out_pre = einops.einsum(
             features, self.W_dec, "... d_sae, d_sae d_in -> ... d_in"
         ) + self.b_dec
-        sae_out = self.run_time_activation_norm_fn_out(sae_out)
+        sae_out = self.run_time_activation_norm_fn_out(sae_out_pre)
         return sae_out
 
     @torch.no_grad()

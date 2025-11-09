@@ -86,11 +86,11 @@ class MatryoshkaBatchTopKTrainingSAE(BatchTopKTrainingSAE):
         if self.cfg.rescale_acts_by_decoder_norm:
             inner_features = inner_features * inv_W_dec_norm[:width]
         
-        sae_out = einops.einsum(
+        sae_out_pre = einops.einsum(
             inner_features, self.W_dec[:width], "... d_sae, d_sae d_in -> ... d_in"
         ) + self.b_dec
         
-        sae_out = self.run_time_activation_norm_fn_out(sae_out)
+        sae_out = self.run_time_activation_norm_fn_out(sae_out_pre)
         return sae_out
 
 

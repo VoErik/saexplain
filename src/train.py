@@ -27,7 +27,7 @@ def run_training(args):
     cfg = load_config(args.config)
 
     if cfg.get("mode", None) in ["backbone", "backbone-classify"]:
-        from src.backbones import train_backbone
+        from src.train_backbone import train_backbone
 
         with ExecTimer("Backbone Training"):
             train_backbone(cfg)
